@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const expect = std.testing.expect;
 
+/// matrices are stored `majority`-wise in memory
 pub const Majority = enum {
     row,
     col,
@@ -14,17 +15,13 @@ pub const Majority = enum {
     }
 };
 
-pub inline fn isElement(type_in_question: type) bool {
-    comptime {
-        return std.meta.hasFn(type_in_question, "SimdType");
-    }
-}
-
-pub fn ArgsType(comptime step: usize, comptime Args: type) type {
+/// return `simd` version of arguments 'Args'.
+/// fields of `Args` must has a constant decl `Element` giving the underlying type.
+pub fn ArgsType(comptime simd: usize, comptime Args: type) type {
     const info_args = @typeInfo(Args).Struct;
     var fields: [info_args.fields.len]std.builtin.Type.StructField = undefined;
     for (info_args.fields, &fields) |src, *dest| {
-        const Arg = (if (isElement(src.type)) src.type else src.type.Element).SimdType(step);
+        const Arg = src.type.Element.SimdType(simd);
         dest.* = .{
             .alignment = @alignOf(Arg),
             .default_value = null,
@@ -41,54 +38,55 @@ pub fn ArgsType(comptime step: usize, comptime Args: type) type {
     } });
 }
 
+/// find smallest SIMD size suggested by the fields of `Args`
 pub inline fn argsSimdSize(comptime Args: type) usize {
     comptime {
         const info_args = @typeInfo(Args).Struct;
-        const max = std.math.maxInt(usize);
-        var min_simd_size = max;
+        var simd_size_min: ?usize = null;
         for (info_args.fields) |field| {
-            const Arg = (if (isElement(field.type)) field.type else field.type.Element).SimdType(null);
-            min_simd_size = @min(min_simd_size, Arg.simd_size);
+            const suggested = field.type.Element.SimdType(null).simd_size;
+            simd_size_min = if (simd_size_min) |min| @min(min, suggested) else suggested;
         }
-        assert(min_simd_size < max);
-        return min_simd_size;
+        return simd_size_min orelse 1;
     }
 }
 
+/// finds the common majority of the matrices in `Args`
 pub inline fn argsMajority(comptime Args: type) ?Majority {
     comptime {
         const info_args = @typeInfo(Args).Struct;
         var maj: ?Majority = null;
         for (info_args.fields) |field| {
-            if (isElement(field.type)) continue;
+            if (field.type.Element == field.type) continue;
             maj = maj orelse field.type.major;
-            if (maj != field.type.major) @compileError("majority does not match");
+            if (maj != field.type.major) @compileError("majorities do not match");
         }
         return maj;
     }
 }
 
-/// asserts that all argument dimensions are the same and returns them in form of a matrix with no values
+/// finds the common matrix dimensions
 pub fn argsDimensions(args: anytype) struct { rows: usize, cols: usize } {
     const info_args = @typeInfo(@TypeOf(args)).Struct;
     var r: ?usize = null;
     var c: ?usize = null;
     inline for (info_args.fields) |field| {
-        if (isElement(field.type)) continue;
+        if (field.type.Element == field.type) continue;
         const arg = @field(args, field.name);
         r = r orelse arg.rows;
+        assert(r == arg.rows);
         c = c orelse arg.cols;
-        if (r != arg.rows or c != arg.cols) unreachable;
+        assert(c == arg.cols);
     }
     return .{ .rows = r orelse 1, .cols = c orelse 1 };
 }
 
-///set arguments given as element
+///set all arguments given as element
 pub fn argsPrep(comptime step: usize, args: anytype) ArgsType(step, @TypeOf(args)) {
     var a: ArgsType(step, @TypeOf(args)) = undefined;
     const info_args = @typeInfo(@TypeOf(args)).Struct;
     inline for (info_args.fields) |field| {
-        if (!isElement(field.type)) continue;
+        if (field.type.Element != field.type) continue;
         const arg = @field(args, field.name);
         @field(a, field.name) = @TypeOf(@field(a, field.name)).simdSplat(arg);
     }
@@ -98,12 +96,13 @@ pub fn argsPrep(comptime step: usize, args: anytype) ArgsType(step, @TypeOf(args
 test "args" {
     const F = @import("float.zig").Type(f32);
     const G = @import("float.zig").Type(f64);
+    const Bool = @import("bool.zig");
     const n = 4;
     const args = .{ F.zero, G.one };
     const simd_args = argsPrep(n, args);
 
     try expect(@TypeOf(simd_args[0]) == F.SimdType(n));
     try expect(@TypeOf(simd_args[1]) == G.SimdType(n));
-    try expect(@reduce(.And, simd_args[0].eq(F.SimdType(n).simdSplat(F.zero))));
-    try expect(@reduce(.And, simd_args[1].eq(G.SimdType(n).simdSplat(G.one))));
+    try expect(Bool.all(simd_args[0].eq(F.SimdType(n).simdSplat(F.zero))));
+    try expect(Bool.all(simd_args[1].eq(G.SimdType(n).simdSplat(G.one))));
 }

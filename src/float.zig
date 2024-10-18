@@ -11,11 +11,12 @@ pub fn Type(comptime Float: type) type {
 }
 
 /// Scalar data structure for floating point computation using SIMD
-/// This is meant for internal use, for scalar computations in userspace use 'Type()' instead.
+/// operations (add, mul, eq, ...) must operate on any SIMD version
 fn FloatType(comptime size: ?usize, comptime Float: type) type {
     { // asserts
-        if (@typeInfo(Float) != .Float) @compileError("'Float' must be a float");
-        if (size == 0) @compileError("size must be > 0");
+        if (size == 0) @compileError("size must be > 0 or null");
+        if (@typeInfo(Float) != .Float)
+            @compileError("expcected float, found " ++ @typeName(Float));
     }
     return struct {
         pub const Element = @This();
@@ -24,138 +25,139 @@ fn FloatType(comptime size: ?usize, comptime Float: type) type {
 
         f: @Vector(simd_size, Float),
 
-        ///
+        /// returns a SIMD version with the given size of the current type
+        /// mainly for internal use
         pub fn SimdType(comptime _size: ?usize) type {
             return FloatType(_size, Float);
         }
 
-        /// the '0' element
-        /// this is the default element in a sparse struct
+        /// for internal use
+        /// removes pointer type and asserts that the result is an Element or SIMD version of it
+        fn Deref(a: type) type {
+            const A = util.Deref(a);
+            if (A.SimdType(1) != SimdType(1))
+                @compileError("a must be a SimdType of Element, found " ++ @typeName(A));
+            return A;
+        }
+
+        /// for internal use
+        /// return Element with all SIMD entries set to `a`
+        pub fn simdSplat(a: SimdType(1)) Element {
+            return Element{ .f = @splat(@bitCast(a.f)) };
+        }
+
+        /// for internal use
+        /// reduce SIMD element a to a single value
+        /// op is expected to be the corresponding operator
+        pub fn simdReduce(a: anytype, comptime op: anytype) Deref(@TypeOf(a)).SimdType(1) {
+            return switch (op) {
+                add => .{ .f = @bitCast(@reduce(.Add, a.f)) },
+                mul => .{ .f = @bitCast(@reduce(.Mul, a.f)) },
+                min => .{ .f = @bitCast(@reduce(.Min, a.f)) },
+                max => .{ .f = @bitCast(@reduce(.Max, a.f)) },
+                else => @compileError("reduce operation not supported"),
+            };
+        }
+
+        /// the `0` element
         pub const zero = Element{ .f = @splat(0) };
 
-        /// the '1' element
+        /// the `1` element
         pub const one = Element{ .f = @splat(1) };
 
-        /// element isomorph to 'p/q'
+        /// element given by the fraction `p/q`
         pub fn from(p: isize, q: usize) Element {
             const p_: Float = @floatFromInt(p);
             const q_: Float = @floatFromInt(q);
             return .{ .f = @splat(p_ / q_) };
         }
 
-        fn Deref(a: type) type {
-            const A = util.Deref(a);
-            if (A.SimdType(1) != SimdType(1)) @compileError("a must be a SimdType of Element");
-            return A;
-        }
-
         /// a == b
-        pub fn eq(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Bool {
+        pub fn eq(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)).Bool {
             return @bitCast(a.f == b.f);
         }
 
         /// a < b
-        pub fn lt(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Bool {
+        pub fn lt(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)).Bool {
             return @bitCast(a.f < b.f);
         }
 
         /// a <= b
-        pub fn lte(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Bool {
+        pub fn lte(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)).Bool {
             return @bitCast(a.f <= b.f);
         }
 
         /// a > b
-        pub fn gt(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Bool {
+        pub fn gt(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)).Bool {
             return @bitCast(a.f > b.f);
         }
 
         /// a >= b
-        pub fn gte(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Bool {
+        pub fn gte(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)).Bool {
             return @bitCast(a.f >= b.f);
         }
 
         /// a != b
-        pub fn neq(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Bool {
+        pub fn neq(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)).Bool {
             return @bitCast(a.f != b.f);
         }
 
         /// a
-        pub fn id(a: anytype) Deref(@TypeOf(a)).Element {
+        pub fn id(a: anytype) Deref(@TypeOf(a)) {
             return if (@typeInfo(@TypeOf(a)) == .Pointer) a.* else a;
         }
 
         /// a + b
-        pub fn add(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Element {
+        pub fn add(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)) {
             return .{ .f = a.f + b.f };
         }
 
         /// -a
-        pub fn neg(a: anytype) Deref(@TypeOf(a)).Element {
+        pub fn neg(a: anytype) Deref(@TypeOf(a)) {
             return .{ .f = -a.f };
         }
 
         /// a - b
-        pub fn sub(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Element {
+        pub fn sub(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)) {
             return .{ .f = a.f - b.f };
         }
 
         /// a * b
-        pub fn mul(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Element {
+        pub fn mul(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)) {
             return .{ .f = a.f * b.f };
         }
 
         /// 1 / a
-        pub fn inv(a: anytype) !Deref(@TypeOf(a)).Element {
-            if (!all(a.neq(Deref(@TypeOf(a)).Element.zero))) return error.DivisionByZero;
+        pub fn inv(a: anytype) !Deref(@TypeOf(a)) {
+            if (!all(a.neq(Deref(@TypeOf(a)).zero))) return error.DivisionByZero;
             return .{ .f = one.f / a.f };
         }
 
         /// a / b
-        pub fn div(a: anytype, b: Deref(@TypeOf(a)).Element) !Deref(@TypeOf(a)).Element {
-            if (!all(b.neq(Deref(@TypeOf(a)).Element.zero))) return error.DivisionByZero;
+        pub fn div(a: anytype, b: Deref(@TypeOf(a))) !Deref(@TypeOf(a)) {
+            if (!all(b.neq(Deref(@TypeOf(a)).zero))) return error.DivisionByZero;
             return .{ .f = a.f / b.f };
         }
 
         /// min(a, b)
-        pub fn min(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Element {
+        pub fn min(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)) {
             return .{ .f = @min(a.f, b.f) };
         }
 
         /// max(a, b)
-        pub fn max(a: anytype, b: Deref(@TypeOf(a)).Element) Deref(@TypeOf(a)).Element {
+        pub fn max(a: anytype, b: Deref(@TypeOf(a))) Deref(@TypeOf(a)) {
             return .{ .f = @max(a.f, b.f) };
         }
 
         /// |a|
-        pub fn abs(a: anytype) Deref(@TypeOf(a)).Element {
+        pub fn abs(a: anytype) Deref(@TypeOf(a)) {
             return .{ .f = @abs(a.f) };
         }
 
         /// sqrt(a)
-        pub fn sqrt(a: anytype) !Deref(@TypeOf(a)).Element {
-            if (!all(a.gte(Deref(@TypeOf(a)).Element.zero))) return error.SqrtOfNegative;
+        pub fn sqrt(a: anytype) !Deref(@TypeOf(a)) {
+            if (!all(a.gte(Deref(@TypeOf(a)).zero))) return error.SqrtOfNegative;
             return .{ .f = @sqrt(a.f) };
-        }
-
-        /// splat Element a of size 1 to simd_size
-        pub fn simdSplat(a: SimdType(1)) Element {
-            return Element{ .f = @splat(@bitCast(a.f)) };
-        }
-
-        pub fn reduceAdd(a: anytype) SimdType(1) {
-            return .{ .f = @bitCast(@reduce(.Add, a.f)) };
-        }
-
-        pub fn reduceMul(a: anytype) SimdType(1) {
-            return .{ .f = @bitCast(@reduce(.Mul, a.f)) };
-        }
-
-        pub fn reduceMin(a: anytype) SimdType(1) {
-            return .{ .f = @bitCast(@reduce(.Min, a.f)) };
-        }
-
-        pub fn reduceMax(a: anytype) SimdType(1) {
-            return .{ .f = @bitCast(@reduce(.Max, a.f)) };
         }
     };
 }
@@ -191,7 +193,9 @@ test "float simd" {
             try expect(!all(a.add(b).eq(c)));
             try expect(all(a.add(b).neq(c)) == (SimdF.simd_size == 1));
 
-            try expect(a.add(b).reduceMax().eq(F.from(if (SimdF.simd_size > 1) 2 else -1, 1)));
+            const d = a.add(b).simdReduce(SimdF.max);
+            const e = F.from(if (SimdF.simd_size > 1) 2 else -1, 1);
+            try expect(d.eq(e));
         }
     }
 }

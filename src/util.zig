@@ -4,14 +4,17 @@ const expect = testing.expect;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
+/// if existent removes pointer
 pub fn Deref(a: type) type {
     const info = @typeInfo(a);
     return if (info == .Pointer) info.Pointer.child else a;
 }
 
-pub inline fn ErrorSet(comptime op: anytype, comptime Args: type) ?type {
+/// ErrorSet of the function `f` given arguments of type `Args`.
+/// `null` if f does not error.
+pub fn ErrorSet(comptime f: anytype, comptime Args: type) ?type {
     const args: Args = undefined;
-    const return_type = @TypeOf(@call(.auto, op, args));
+    const return_type = @TypeOf(@call(.auto, f, args));
     return switch (@typeInfo(return_type)) {
         .ErrorUnion => |error_union| error_union.error_set,
         else => null,
@@ -46,7 +49,7 @@ fn MultiPointer(comptime T: type) type {
     } });
 }
 
-/// recurrsive MultiPointer
+/// recurrsive MultiPointer + length
 pub fn MultiSlice(comptime Element: type) type {
     if (@typeInfo(Element) != .Struct) @compileError("type must be a struct");
     return packed struct {
@@ -80,7 +83,7 @@ pub fn MultiSlice(comptime Element: type) type {
             };
         }
 
-        // TODO: errdefer or better: fuse into single alloc
+        // TODO: fuse into single alloc
         pub fn init(n: usize, allocator: Allocator) !Slice {
             var slice: Slice = undefined;
             slice.len = n;
@@ -118,7 +121,7 @@ pub fn MultiSlice(comptime Element: type) type {
             inline for (@typeInfo(Element).Struct.fields) |field| {
                 const info = @typeInfo(field.type);
                 switch (info) {
-                    .Vector => @field(slice.ptr, field.name)[i..][0..info.Vector.len].* = @field(element, field.name),
+                    .Vector => @field(slice.ptr, field.name)[i..][0..simd_size].* = @field(element, field.name),
                     .Struct => slice.sub(field).set(i, @field(element, field.name)),
                     else => unreachable,
                 }
