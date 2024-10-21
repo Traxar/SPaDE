@@ -162,24 +162,50 @@ pub fn Type(comptime Elem: type, comptime majority: Majority) type {
                 const dim = common.argsDimensions(args);
                 assert(dim.rows == res.rows);
                 assert(dim.cols == res.cols);
-                const simd = common.argsSimdSize(Args);
-                const steps = if (simd > 1) .{ simd, 1 } else .{1};
-                var i = res.cols * res.rows;
-                inline for (steps) |step| {
+                var i = dim.cols * dim.rows;
+                inline for (.{ common.argsSimdSize(Args), 1 }) |step| {
                     var a = common.argsPrep(step, args);
-                    while (i > step - 1) {
+                    while (i >= step) {
                         i -= step;
                         argsSet(step, i, args, &a);
                         const r_ = @call(.auto, op, a);
                         const r = if (ErrorSet(op, @TypeOf(args))) |_| try r_ else r_;
                         res.valsSimd(step).set(i, r);
                     }
+                    if (step == 1) break;
                 }
             } else {
                 const r_ = @call(.auto, op, args);
                 const r = if (ErrorSet(op, @TypeOf(args))) |_| try r_ else r_;
                 res.vals.fill(0, res.cols * res.rows, r);
             }
+        }
+
+        ///res <- op_red(op_ew(args))
+        pub fn red(comptime op_red: anytype, comptime op_ew: anytype, args: anytype) if (ErrorSet(op_ew, @TypeOf(args))) |E| E!Element else Element {
+            const Args = @TypeOf(args);
+            assert(common.argsMajority(Args) == major);
+            const dim = common.argsDimensions(args);
+            var i = dim.cols * dim.rows;
+            assert(i > 0);
+            var res: ?Element = null;
+            inline for (.{ common.argsSimdSize(Args), 1 }) |step| {
+                var a = common.argsPrep(step, args);
+                var prt: ?Element.SimdType(step) = null;
+                while (i >= step) {
+                    i -= step;
+                    argsSet(step, i, args, &a);
+                    const r_ = @call(.auto, op_ew, a);
+                    const r = if (ErrorSet(op_ew, @TypeOf(args))) |_| try r_ else r_;
+                    prt = if (prt) |p| op_red(r, p) else r;
+                }
+                if (prt) |p| {
+                    const q = Element.simdReduce(p, op_red);
+                    res = if (res) |r| op_red(q, r) else q;
+                }
+                if (step == 1) break;
+            }
+            return res.?;
         }
     };
 }
@@ -254,4 +280,23 @@ test "matrix elementwise operations" {
             try expect(b.at(i, j).eq(F.from(@intCast(i), j + 1).add(F.one)));
         }
     }
+}
+
+test "matrix reduce" {
+    const ally = std.testing.allocator;
+    const Float = @import("float.zig");
+    const F = Float.Type(f64);
+    const M = Type(F, .row);
+
+    const n = 3;
+    const m = 4;
+    const a = try M.init(n, m, ally);
+    defer a.deinit(ally);
+    for (0..n) |i| {
+        for (0..m) |j| {
+            a.set(i, j, F.one);
+        }
+    }
+    const b = try M.red(F.add, F.div, .{ a, F.from(2, 1) });
+    try expect(b.eq(F.from(n * m, 2)));
 }

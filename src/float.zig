@@ -13,7 +13,7 @@ pub fn Type(comptime Float: type) type {
 /// Scalar data structure for floating point computation using SIMD
 /// operations (add, mul, eq, ...) must operate on any SIMD version
 fn FloatType(comptime size: ?usize, comptime Float: type) type {
-    { // asserts
+    comptime {
         if (size == 0) @compileError("size must be > 0 or null");
         if (@typeInfo(Float) != .Float)
             @compileError("expcected float, found " ++ @typeName(Float));
@@ -50,6 +50,10 @@ fn FloatType(comptime size: ?usize, comptime Float: type) type {
         /// reduce SIMD element a to a single value
         /// op is expected to be the corresponding operator
         pub fn simdReduce(a: anytype, comptime op: anytype) Deref(@TypeOf(a)).SimdType(1) {
+            comptime {
+                const b: Element = undefined;
+                assert(@TypeOf(@call(.auto, op, .{ b, b })) == Element);
+            }
             return switch (op) {
                 add => .{ .f = @bitCast(@reduce(.Add, a.f)) },
                 mul => .{ .f = @bitCast(@reduce(.Mul, a.f)) },
