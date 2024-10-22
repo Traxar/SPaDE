@@ -202,8 +202,8 @@ pub fn Type(comptime Elem: type, comptime majority: Majority) type {
                     const res_ew = if (ErrorSet(op_ew, @TypeOf(args))) |_| try res_ew_err else res_ew_err;
                     res_step = op_red(res_ew, res_step);
                 }
-                const p = Element.simdReduce(res_step, op_red);
-                res = if (res) |r| op_red(p, r) else p;
+                const now = Element.simdReduce(res_step, op_red);
+                res = if (res) |sofar| op_red(now, sofar) else now;
             }
             return res.?;
         }
