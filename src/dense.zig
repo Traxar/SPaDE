@@ -164,20 +164,19 @@ pub fn Type(comptime Elem: type, comptime majority: Majority) type {
                 assert(dim.cols == res.cols);
                 var i = dim.cols * dim.rows;
                 inline for (.{ common.argsSimdSize(Args), 1 }) |step| {
-                    var a = common.argsPrep(step, args);
+                    var args_step = common.argsPrep(step, args);
                     while (i >= step) {
                         i -= step;
-                        argsSet(step, i, args, &a);
-                        const r_ = @call(.auto, op, a);
-                        const r = if (ErrorSet(op, @TypeOf(args))) |_| try r_ else r_;
-                        res.valsSimd(step).set(i, r);
+                        argsSet(step, i, args, &args_step);
+                        const res_step_err = @call(.auto, op, args_step);
+                        const res_step = if (ErrorSet(op, @TypeOf(args))) |_| try res_step_err else res_step_err;
+                        res.valsSimd(step).set(i, res_step);
                     }
-                    if (step == 1) break;
                 }
             } else {
-                const r_ = @call(.auto, op, args);
-                const r = if (ErrorSet(op, @TypeOf(args))) |_| try r_ else r_;
-                res.vals.fill(0, res.cols * res.rows, r);
+                const res_all_err = @call(.auto, op, args);
+                const res_all = if (ErrorSet(op, @TypeOf(args))) |_| try res_all_err else res_all_err;
+                res.vals.fill(0, res.cols * res.rows, res_all);
             }
         }
 
@@ -189,21 +188,22 @@ pub fn Type(comptime Elem: type, comptime majority: Majority) type {
             var i = dim.cols * dim.rows;
             assert(i > 0);
             var res: ?Element = null;
-            inline for (.{ common.argsSimdSize(Args), 1 }) |step| {
+            inline for (.{ common.argsSimdSize(Args), 1 }) |step| blk: {
                 var a = common.argsPrep(step, args);
-                var prt: ?Element.SimdType(step) = null;
+                if (i < step) break :blk; //continue
+                i -= step;
+                argsSet(step, i, args, &a);
+                const res_step_err = @call(.auto, op_ew, a);
+                var res_step = if (ErrorSet(op_ew, @TypeOf(args))) |_| try res_step_err else res_step_err;
                 while (i >= step) {
                     i -= step;
                     argsSet(step, i, args, &a);
-                    const r_ = @call(.auto, op_ew, a);
-                    const r = if (ErrorSet(op_ew, @TypeOf(args))) |_| try r_ else r_;
-                    prt = if (prt) |p| op_red(r, p) else r;
+                    const res_ew_err = @call(.auto, op_ew, a);
+                    const res_ew = if (ErrorSet(op_ew, @TypeOf(args))) |_| try res_ew_err else res_ew_err;
+                    res_step = op_red(res_ew, res_step);
                 }
-                if (prt) |p| {
-                    const q = Element.simdReduce(p, op_red);
-                    res = if (res) |r| op_red(q, r) else q;
-                }
-                if (step == 1) break;
+                const p = Element.simdReduce(res_step, op_red);
+                res = if (res) |r| op_red(p, r) else p;
             }
             return res.?;
         }
