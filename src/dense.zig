@@ -189,16 +189,16 @@ pub fn Type(comptime Elem: type, comptime majority: Majority) type {
             assert(i > 0);
             var res: ?Element = null;
             inline for (.{ common.argsSimdSize(Args), 1 }) |step| blk: {
-                var a = common.argsPrep(step, args);
+                var args_step = common.argsPrep(step, args);
                 if (i < step) break :blk; //continue
                 i -= step;
-                argsSet(step, i, args, &a);
-                const res_step_err = @call(.auto, op_ew, a);
+                argsSet(step, i, args, &args_step);
+                const res_step_err = @call(.auto, op_ew, args_step);
                 var res_step = if (ErrorSet(op_ew, @TypeOf(args))) |_| try res_step_err else res_step_err;
                 while (i >= step) {
                     i -= step;
-                    argsSet(step, i, args, &a);
-                    const res_ew_err = @call(.auto, op_ew, a);
+                    argsSet(step, i, args, &args_step);
+                    const res_ew_err = @call(.auto, op_ew, args_step);
                     const res_ew = if (ErrorSet(op_ew, @TypeOf(args))) |_| try res_ew_err else res_ew_err;
                     res_step = op_red(res_ew, res_step);
                 }
