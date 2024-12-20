@@ -1,3 +1,3 @@
 test {
-    _ = @import("dense.zig");
+    _ = @import("tensor.zig");
 }

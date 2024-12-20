@@ -4,10 +4,17 @@ const expect = testing.expect;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-/// if existent removes pointer
-pub fn Deref(a: type) type {
-    const info = @typeInfo(a);
-    return if (info == .Pointer) info.Pointer.child else a;
+const simd = @import("simd.zig");
+
+/// return the non pointer type
+pub fn Deref(A: type) type {
+    const info = @typeInfo(A);
+    return if (info == .Pointer) info.Pointer.child else A;
+}
+
+test {
+    try expect(Deref(usize) == usize);
+    try expect(Deref(*usize) == usize);
 }
 
 /// ErrorSet of the function `f` given arguments of type `Args`.
@@ -21,60 +28,56 @@ pub fn ErrorSet(comptime f: anytype, comptime Args: type) ?type {
     };
 }
 
-/// recurrsive MultiPointer without functions
-fn MultiPointer(comptime T: type) type {
-    const fields_T = @typeInfo(T).Struct.fields;
-    var fields_MP: [fields_T.len]std.builtin.Type.StructField = undefined;
+/// stack allocation
+inline fn _alloc(Element: type, comptime length: usize) []Element {
+    var mem: [length]Element = undefined;
+    return mem[0..];
+}
 
-    for (&fields_MP, fields_T) |*f_MP, f_T| {
-        const info_sub = @typeInfo(f_T.type);
-        const MP_sub = switch (info_sub) {
-            .Vector => [*]info_sub.Vector.child,
-            .Struct => MultiPointer(f_T.type),
-            else => @compileError("type not supported"),
-        };
-        f_MP.* = .{
-            .alignment = 0,
-            .default_value = null,
-            .is_comptime = f_T.is_comptime,
-            .name = f_T.name,
-            .type = MP_sub,
-        };
-    }
-    return @Type(std.builtin.Type{ .Struct = .{
-        .layout = .@"packed",
-        .fields = &fields_MP,
-        .decls = &[_]std.builtin.Type.Declaration{},
-        .is_tuple = false,
-    } });
+/// recurrsive MultiPointer without functions
+fn MultiPointer(Element: type) type {
+    const info_E = @typeInfo(Element);
+    return switch (info_E) {
+        .Struct => |s| rec: {
+            var fields_MP: [s.fields.len]std.builtin.Type.StructField = undefined;
+            for (&fields_MP, s.fields) |*field_MP, field_E| {
+                field_MP.* = .{
+                    .alignment = 0,
+                    .default_value = null,
+                    .is_comptime = field_E.is_comptime,
+                    .name = field_E.name,
+                    .type = MultiPointer(field_E.type),
+                };
+            }
+            break :rec @Type(std.builtin.Type{ .Struct = .{
+                .layout = .@"packed",
+                .fields = &fields_MP,
+                .decls = &[_]std.builtin.Type.Declaration{},
+                .is_tuple = false,
+            } });
+        },
+        .Vector => |v| [*]v.child,
+        else => [*]Element,
+    };
+}
+
+test {
+    const A = struct { a: bool, b: u13, c: f32 };
+    const C = MultiPointer(A);
+    const c: C = undefined;
+    try expect(@TypeOf(c.a) == [*]bool);
+    try expect(@TypeOf(c.b) == [*]u13);
+    try expect(@TypeOf(c.c) == [*]f32);
 }
 
 /// recurrsive MultiPointer + length
 pub fn MultiSlice(comptime Element: type) type {
-    if (@typeInfo(Element) != .Struct) @compileError("type must be a struct");
     return packed struct {
         const Slice = @This();
         ptr: MultiPointer(Element),
         len: usize,
 
-        const simd_size = simd_size: {
-            var simd: usize = undefined;
-            const fields_T = @typeInfo(Element).Struct.fields;
-            for (fields_T, 0..) |f_T, i| {
-                const info_sub = @typeInfo(f_T.type);
-                const simd_sub = switch (info_sub) {
-                    .Vector => info_sub.Vector.len,
-                    .Struct => MultiSlice(f_T.type).simd_size,
-                    else => unreachable,
-                };
-                if (i == 0) {
-                    simd = simd_sub;
-                } else if (simd != simd_sub) {
-                    @compileError("vector length does not match");
-                }
-            }
-            break :simd_size simd;
-        };
+        const simd_size = simd.length(Element);
 
         fn sub(slice: Slice, field: std.builtin.Type.StructField) MultiSlice(field.type) {
             return MultiSlice(field.type){
@@ -84,31 +87,54 @@ pub fn MultiSlice(comptime Element: type) type {
         }
 
         // TODO: fuse into single alloc
+        // FIX: handle alloc faliure correctly
         pub fn init(n: usize, allocator: Allocator) !Slice {
             var slice: Slice = undefined;
             slice.len = n;
-            inline for (@typeInfo(Element).Struct.fields) |field| {
-                const info = @typeInfo(field.type);
-                @field(slice.ptr, field.name) = (try switch (info) {
-                    .Vector => allocator.alloc(info.Vector.child, n),
-                    .Struct => MultiSlice(field.type).init(n, allocator),
-                    else => unreachable,
-                }).ptr;
-            }
+            slice.ptr = switch (@typeInfo(Element)) {
+                .Struct => |s| rec: {
+                    var res: MultiPointer(Element) = undefined;
+                    inline for (s.fields) |field| {
+                        @field(res, field.name) = (try MultiSlice(field.type).init(n, allocator)).ptr;
+                    }
+                    break :rec res;
+                },
+                .Vector => |v| (try allocator.alloc(v.child, n)).ptr,
+                else => (try allocator.alloc(Element, n)).ptr,
+            };
+            return slice;
+        }
+
+        ///stack allocation
+        pub inline fn _init(comptime n: usize) Slice {
+            var slice: Slice = undefined;
+            slice.len = n;
+            slice.ptr = switch (@typeInfo(Element)) {
+                .Struct => |s| rec: {
+                    var res: MultiPointer(Element) = undefined;
+                    inline for (s.fields) |field| {
+                        @field(res, field.name) = MultiSlice(field.type)._init(n).ptr;
+                    }
+                    break :rec res;
+                },
+                .Vector => |v| _alloc(v.child, n).ptr,
+                else => _alloc(Element, n).ptr,
+            };
             return slice;
         }
 
         pub fn deinit(slice: Slice, allocator: Allocator) void {
-            inline for (@typeInfo(Element).Struct.fields) |field| {
-                const info = @typeInfo(field.type);
-                switch (info) {
-                    .Vector => allocator.free(@field(slice.ptr, field.name)[0..slice.len]),
-                    .Struct => slice.sub(field).deinit(allocator),
-                    else => unreachable,
-                }
+            switch (@typeInfo(Element)) {
+                .Struct => |s| {
+                    inline for (s.fields) |field| {
+                        slice.sub(field).deinit(allocator);
+                    }
+                },
+                else => allocator.free(slice.ptr[0..slice.len]),
             }
         }
 
+        // ensures capacity but invalidates any content
         pub fn ensureCapacity(slice: *Slice, n: usize, allocator: Allocator) !void {
             if (n <= slice.len) return;
             const h = try Slice.init(n, allocator);
@@ -118,37 +144,41 @@ pub fn MultiSlice(comptime Element: type) type {
 
         pub fn set(slice: Slice, i: usize, element: Element) void {
             assert(i + simd_size <= slice.len);
-            inline for (@typeInfo(Element).Struct.fields) |field| {
-                const info = @typeInfo(field.type);
-                switch (info) {
-                    .Vector => @field(slice.ptr, field.name)[i..][0..simd_size].* = @field(element, field.name),
-                    .Struct => slice.sub(field).set(i, @field(element, field.name)),
-                    else => unreachable,
-                }
+            switch (@typeInfo(Element)) {
+                .Struct => |s| {
+                    inline for (s.fields) |field| {
+                        slice.sub(field).set(i, @field(element, field.name));
+                    }
+                },
+                .Vector => slice.ptr[i..][0..simd_size].* = element,
+                else => slice.ptr[i] = element,
             }
         }
 
         pub fn at(slice: Slice, i: usize) Element {
             assert(i + simd_size <= slice.len);
-            var element: Element = undefined;
-            inline for (@typeInfo(Element).Struct.fields) |field| {
-                @field(element, field.name) = switch (@typeInfo(field.type)) {
-                    .Vector => @field(slice.ptr, field.name)[i..][0..simd_size].*,
-                    .Struct => slice.sub(field).at(i),
-                    else => unreachable,
-                };
-            }
-            return element;
+            return switch (@typeInfo(Element)) {
+                .Struct => |s| rec: {
+                    var element: Element = undefined;
+                    inline for (s.fields) |field| {
+                        @field(element, field.name) = slice.sub(field).at(i);
+                    }
+                    break :rec element;
+                },
+                .Vector => slice.ptr[i..][0..simd_size].*,
+                else => slice.ptr[i],
+            };
         }
 
         pub fn fill(slice: Slice, from: usize, to: usize, element: Element) void {
-            inline for (@typeInfo(Element).Struct.fields) |field| {
-                const info = @typeInfo(field.type);
-                switch (info) {
-                    .Vector => @memset(@field(slice.ptr, field.name)[from..to], @bitCast(@field(element, field.name))),
-                    .Struct => slice.sub(field).fill(from, to, @field(element, field.name)),
-                    else => unreachable,
-                }
+            assert(simd.length(Element) == 1);
+            switch (@typeInfo(Element)) {
+                .Struct => |s| {
+                    inline for (s.fields) |field| {
+                        slice.sub(field).fill(from, to, @field(element, field.name));
+                    }
+                },
+                else => @memset(slice.ptr[from..to], @bitCast(element)),
             }
         }
     };
@@ -156,28 +186,44 @@ pub fn MultiSlice(comptime Element: type) type {
 
 test "MultiSlice" {
     const ally = testing.allocator;
-    const V = struct { a: @Vector(5, bool), b: struct { c: @Vector(5, usize) } };
-    const MS = MultiSlice(V);
-    // init/deinit
-    const ms = try MS.init(10, ally);
-    defer ms.deinit(ally);
-    try expect(@TypeOf(ms.ptr.a) == [*]bool);
-    try expect(@TypeOf(ms.ptr.b.c) == [*]usize);
-    try expect(ms.len == 10);
-    try expect(MS.simd_size == 5);
-    // at/set
-    const v = .{
-        .a = .{ true, true, false, false, false },
-        .b = .{
-            .c = .{ 1, 2, 3, 4, 5 },
-        },
-    };
-    ms.set(1, v);
-    // std.log.warn("{any}", .{ms.ptr.a[0..][0..5].*});
-    // std.log.warn("{any}", .{ms.at(0).a});
+    const A = struct { a: bool, b: u13, c: f32 };
+    const C = simd.Vector(3, A);
+    const SA = MultiSlice(A);
+    const SC = MultiSlice(C);
 
-    // try expect(ms.at(0).a[2] == true); // TODO: uncomment, fails in zig 0.13.0 (only bools affected)
-    // try expect(ms.at(0).a[3] == false); // TODO: uncomment, fails in zig 0.13.0 (only bools affected)
-    try expect(ms.at(0).b.c[1] == 1);
-    try expect(ms.at(0).b.c[2] == 2);
+    //init/deinit
+    const sc = try SC.init(5, ally);
+    defer sc.deinit(ally);
+    try expect(@TypeOf(sc.ptr.a) == [*]bool);
+    try expect(@TypeOf(sc.ptr.b) == [*]u13);
+    try expect(@TypeOf(sc.ptr.c) == [*]f32);
+    try expect(sc.len == 5);
+    try expect(SC.simd_size == 3);
+
+    //at/set
+    const c = C{
+        .a = .{ true, false, false },
+        .b = .{ 3, 4, 5 },
+        .c = .{ -0.5, 7.25, -3.75 },
+    };
+    sc.set(0, c);
+    sc.set(2, c);
+    const sa: SA = @bitCast(sc);
+    try expect(sa.at(0).a == true);
+    try expect(sa.at(1).a == false);
+    try expect(sa.at(2).a == true);
+    try expect(sa.at(3).a == false);
+    try expect(sa.at(4).a == false);
+
+    try expect(sa.at(0).b == 3);
+    try expect(sa.at(1).b == 4);
+    try expect(sa.at(2).b == 3);
+    try expect(sa.at(3).b == 4);
+    try expect(sa.at(4).b == 5);
+
+    try expect(sa.at(0).c == -0.5);
+    try expect(sa.at(1).c == 7.25);
+    try expect(sa.at(2).c == -0.5);
+    try expect(sa.at(3).c == 7.25);
+    try expect(sa.at(4).c == -3.75);
 }
