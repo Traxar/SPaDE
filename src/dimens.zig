@@ -16,7 +16,7 @@ pub fn _isSet(dims: Dims) bool {
 /// comptime-only difference of 2 sets
 /// <- a - b
 /// order of a is prefered
-pub inline fn _difference(a: Dims, b: Dims) Dims {
+pub inline fn _sub(a: Dims, b: Dims) Dims {
     comptime {
         assert(_isSet(a));
         assert(_isSet(b));
@@ -34,7 +34,7 @@ pub inline fn _difference(a: Dims, b: Dims) Dims {
 test "diff" {
     const a: Dims = &.{ 0, 1 };
     const b: Dims = &.{ 1, 2, 3 };
-    const c = _difference(b, a);
+    const c = _sub(b, a);
     try expect(c.len == 2);
     try expect(c[0] == 2);
     try expect(c[1] == 3);
@@ -43,7 +43,7 @@ test "diff" {
 /// comptime-only union of 2 sets
 /// order of a is prefered
 pub inline fn _union(a: Dims, b: Dims) Dims {
-    return a ++ _difference(b, a);
+    return a ++ _sub(b, a);
 }
 
 test "combine" {
@@ -59,7 +59,7 @@ test "combine" {
 
 ///comptime-only intersection of 2 sets
 pub inline fn _intersect(dims: Dims, other: Dims) Dims {
-    return _difference(dims, _difference(dims, other));
+    return _sub(dims, _sub(dims, other));
 }
 
 test "intersect" {
@@ -89,7 +89,7 @@ test "max" {
 /// true if dims > other
 pub inline fn _contains(dims: Dims, other: Dims) bool {
     comptime {
-        return _difference(other, dims).len == 0;
+        return _sub(other, dims).len == 0;
     }
 }
 
@@ -109,4 +109,47 @@ pub inline fn _equal(dims: Dims, other: Dims) bool {
 test "equal" {
     try expect(_equal(&.{ 0, 1 }, &.{ 0, 1 }));
     try expect(!_equal(&.{0}, &.{ 0, 1 }));
+}
+
+/// comptime-only
+/// replace i by j and j by i
+pub inline fn _swap(dims: Dims, i: usize, j: usize) Dims {
+    comptime {
+        var res: Dims = &.{};
+        for (dims) |d| {
+            res = res ++ .{switch (d) {
+                i => j,
+                j => i,
+                else => d,
+            }};
+        }
+        return res;
+    }
+}
+
+test "swap" {
+    const a = _swap(&.{ 0, 1 }, 0, 1);
+    try expect(a[0] == 1);
+    try expect(a[1] == 0);
+    const b = _swap(&.{ 0, 1 }, 0, 2);
+    try expect(b[0] == 2);
+    try expect(b[1] == 1);
+}
+
+/// comptime-only
+/// index of dim in dims
+pub inline fn _index(dims: Dims, dim: usize) ?usize {
+    comptime {
+        for (dims, 0..) |d, i| {
+            if (d == dim) return i;
+        }
+        return null;
+    }
+}
+
+test "index" {
+    try expect(_index(&.{ 0, 2, 3 }, 0) == 0);
+    try expect(_index(&.{ 0, 2, 3 }, 1) == null);
+    try expect(_index(&.{ 0, 2, 3 }, 2) == 1);
+    try expect(_index(&.{ 0, 2, 3 }, 3) == 2);
 }

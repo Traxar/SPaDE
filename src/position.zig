@@ -1,7 +1,7 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const assert = std.debug.assert;
-const dimens = @import("dimens.zig");
+const dim = @import("dimens.zig");
 
 /// n-dimensional position
 pub fn Type(comptime dims: []const usize) type {
@@ -10,7 +10,7 @@ pub fn Type(comptime dims: []const usize) type {
         vec: @Vector(dims.len, usize),
 
         pub fn from(coord: []const usize) Position {
-            assert(dims.len == 0 or coord.len > dimens._max(dims)); //not enough coordinates provided
+            assert(dims.len == 0 or coord.len > dim._max(dims)); //not enough coordinates provided
             var res: Position = undefined;
             inline for (dims, 0..) |d, i| {
                 res.vec[i] = coord[d];
