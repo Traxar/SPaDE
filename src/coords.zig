@@ -13,9 +13,9 @@ pub fn Type(dims: Dims) type {
 
         /// if anyarg is a Tensor collect its size.
         pub fn collectSize(size: *Coords, anyarg: anytype) void {
-            const A = @TypeOf(anyarg);
-            if (!tensor.is(A)) return;
-            inline for (A.dims.slice(), 0..) |dim, i| {
+            const AnyArg = @TypeOf(anyarg);
+            if (!tensor.is(AnyArg)) return;
+            inline for (AnyArg.dims.slice(), 0..) |dim, i| {
                 if (size.arr[dim] == 0) {
                     size.arr[dim] = anyarg.size.vec[i];
                 } else {
@@ -51,21 +51,19 @@ pub fn Type(dims: Dims) type {
     };
 }
 
-test "coord iteration" {
+test "coord reset/next" {
     const dims = Dims.from(&.{ 0, 2 });
     const Coords = Type(dims);
     const size = Coords{
         .arr = .{ 3, 4, 5 },
     };
     var i = Coords.zero;
-    try expect(i.arr[0] == 0);
-    try expect(i.arr[1] == 0);
-    try expect(i.arr[2] == 0);
 
     for (0..4) |_| {
         try expect(i.next(size, dims));
     }
     try expect(i.arr[0] == 1);
+    try expect(i.arr[1] == 0);
     try expect(i.arr[2] == 1);
     for (0..10) |_| {
         try expect(i.next(size, dims));

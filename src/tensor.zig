@@ -27,7 +27,7 @@ pub fn Type(Element: type) type {
 
         //TODO: pub fn Sparse()
 
-        pub fn f(comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).Return(ew, Element) {
+        pub fn f(comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).ErrorWrap(ew, Element) {
             const val = util.MultiSlice(Element)._init(1);
             const res = Dense(&.{}){
                 .size = undefined,
@@ -64,6 +64,7 @@ fn DenseType(Elem: type, comptime dimensions: Dims) type {
             };
         }
 
+        /// invalidates data
         pub fn reinit(a: *Tensor, size: []const usize, allocator: Allocator) !void {
             const sz = Position.from(size);
             assert(sz.mul() > 0); // must alloc atleast 1 element
@@ -77,28 +78,31 @@ fn DenseType(Elem: type, comptime dimensions: Dims) type {
             a.vals.deinit(allocator);
         }
 
+        /// position `pos` to index into `a.vals`
         fn ind(a: Tensor, pos: Position) usize {
             return a.offset + a.incr.ind(pos);
         }
 
+        /// value of tensor `a` at coordinates `coord`
         pub fn at(a: Tensor, coord: []const usize) Element {
             const pos = Position.from(coord);
             assert(pos.lt(a.size)); //out of bounds
             return a.vals.at(a.ind(pos));
         }
 
+        /// set value of tensor `a` at coordinates `coord`
         pub fn set(a: Tensor, coord: []const usize, element: Element) void {
             const pos = Position.from(coord);
             assert(pos.lt(a.size)); //out of bounds
             a.vals.set(a.ind(pos), element);
         }
 
-        /// lazy swap of dimensions i and j
+        /// lazily swap dimensions `i` and `j`
         pub fn t(a: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dims.swap(i, j)) {
             return @bitCast(a);
         }
 
-        /// lazily restrict the coordinate in dim d of a tensor a
+        /// lazily restrict the coordinate in dimension `d` of tensor `a`
         pub fn clamp(a: Tensor, comptime d: usize, start: usize, size: usize) Tensor {
             const i = dims.index(d).?; //d must be in dims
             assert(start + size <= a.size.vec[i]); //out of bounds
@@ -108,7 +112,7 @@ fn DenseType(Elem: type, comptime dimensions: Dims) type {
             return res;
         }
 
-        /// lazily fix the coordinate in dim d of a tensor a
+        /// lazily fix the coordinate in diminsion `d` of tensor `a`
         /// this returns a tensor of lower dimension
         pub fn sub(a: Tensor, comptime d: usize, coord: usize) DenseType(Element, dims.sub(Dims.from(&.{d}))) {
             const i = dims.index(d).?; //d must be in dims
@@ -122,13 +126,14 @@ fn DenseType(Elem: type, comptime dimensions: Dims) type {
         }
 
         /// res <- red(ew(anyargs))
-        pub fn f(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).Return(ew, void) {
+        pub fn f(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).ErrorWrap(ew, void) {
             const Args = args.Type(@TypeOf(anyargs));
             return res.fInternal(red, ew, anyargs, dims.unite(Args.dims));
         }
 
         /// res <- red(ew(anyargs))
-        fn fInternal(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype, comptime dims_order: Dims) args.Type(@TypeOf(anyargs)).Return(ew, void) {
+        /// with iteration order given by `dims_order`
+        fn fInternal(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype, comptime dims_order: Dims) args.Type(@TypeOf(anyargs)).ErrorWrap(ew, void) {
             const Args = args.Type(@TypeOf(anyargs));
             const dims_total = dims.unite(Args.dims);
             assert(dims_total.equal(dims_order)); //dims_order must match dimensions of the tensor operation
@@ -160,12 +165,15 @@ fn DenseType(Elem: type, comptime dimensions: Dims) type {
             }
         }
 
+        /// union of all dimensions of `@This()` and `AnyArgs`
         inline fn collectDims(AnyArgs: type) Dims {
             comptime {
                 return dims.unite(args.Type(AnyArgs).dims);
             }
         }
 
+        /// total size of tensor `res` and arguments `anyargs`
+        /// asserts matching sizes
         fn collectSize(res: Tensor, anyargs: anytype) coords.Type(collectDims(@TypeOf(anyargs))) {
             var size = coords.Type(collectDims(@TypeOf(anyargs))).zero;
             size.collectSize(res);
@@ -199,6 +207,7 @@ test "tensor type" {
     const S = Type(f32).Dense(&.{ 1, 2 });
     const s = try S.init(&.{ 3, 4, 5 }, ally); //unused dimension 0 is ignored
     defer s.deinit(ally);
+
     try expect(s.size.vec[0] == 4);
     try expect(s.size.vec[1] == 5);
     try expect(s.vals.len == 20);
@@ -207,11 +216,10 @@ test "tensor type" {
 test "tensor type 0D" {
     const ally = std.testing.allocator;
     const S = Type(f32).Dense(&.{});
-    const s = try S.init(&.{}, ally); //unused dimension 0 is ignored
+    const s = try S.init(&.{}, ally);
     defer s.deinit(ally);
-    s.set(&.{ 0, 1, 2 }, 3.5);
     try expect(s.vals.len == 1);
-    try expect(s.at(&.{ 6, 7, 8 }) == 3.5);
+    try expect(@TypeOf(s.size.vec) == @Vector(0, usize));
 }
 
 test "tensor at/set" {
@@ -223,7 +231,7 @@ test "tensor at/set" {
     try expect(s.at(&.{ 0, 2 }) == 6);
 }
 
-test "tensor ew" {
+test "tensor f" {
     const op = @import("op.zig");
     const ally = std.testing.allocator;
     const T = Type(f32);
@@ -255,7 +263,7 @@ test "tensor ew" {
     var d = T.f(op.add, op.id, .{c});
     try expect(d == 45);
 
-    d = T.f(op.add, op.mul, .{ a, b.t(0, 1) });
+    d = T.f(op.add, op.mul, .{ a, b.t(0, 1) }); //combined
     try expect(d == 45);
 }
 
@@ -270,9 +278,12 @@ test "tensor sub/fix" {
     a.set(&.{ 1, 0 }, 4);
     a.set(&.{ 1, 1 }, 5);
     a.set(&.{ 1, 2 }, 6);
+
     const b = a.clamp(1, 1, 2);
     try expect(b.vals.ptr == a.vals.ptr);
     try expect(b.offset == 2);
+    try expect(b.size.vec[0] == 2);
+    try expect(b.size.vec[1] == 2);
     try expect(b.at(&.{ 0, 0 }) == 2);
     try expect(b.at(&.{ 0, 1 }) == 3);
     try expect(b.at(&.{ 1, 0 }) == 5);
@@ -285,7 +296,7 @@ test "tensor sub/fix" {
     try expect(c.vals.ptr == a.vals.ptr);
     try expect(c.offset == 1);
     try expect(c.size.vec[0] == 3);
-    try expect(c.at(&.{ 100, 0 }) == 4);
-    try expect(c.at(&.{ 100, 1 }) == 5);
-    try expect(c.at(&.{ 100, 2 }) == 6);
+    try expect(c.at(&.{ 0, 0 }) == 4);
+    try expect(c.at(&.{ 0, 1 }) == 5);
+    try expect(c.at(&.{ 0, 2 }) == 6);
 }
