@@ -3,7 +3,7 @@ const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const util = @import("util.zig");
-const dim = @import("dimens.zig");
+const Dims = @import("dims.zig").Type;
 const position = @import("position.zig");
 const coords = @import("coords.zig");
 const args = @import("args.zig");
@@ -14,7 +14,7 @@ pub inline fn is(T: type) bool {
     comptime {
         if (@typeInfo(T) != .Struct) return false;
         if (!@hasDecl(T, "Element") or !@hasDecl(T, "dims")) return false;
-        if (@TypeOf(T.dims) != []const usize) return false;
+        if (@TypeOf(T.dims) != Dims) return false;
         return T == DenseType(T.Element, T.dims);
     }
 }
@@ -22,12 +22,12 @@ pub inline fn is(T: type) bool {
 pub fn Type(Element: type) type {
     return packed struct {
         pub fn Dense(comptime dimensions: []const usize) type {
-            return DenseType(Element, dimensions);
+            return DenseType(Element, Dims.from(dimensions));
         }
 
         //TODO: pub fn Sparse()
 
-        pub fn f(comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Return(ew, @TypeOf(anyargs), Element) {
+        pub fn f(comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).Return(ew, Element) {
             const val = util.MultiSlice(Element)._init(1);
             const res = Dense(&.{}){
                 .size = undefined,
@@ -41,21 +41,7 @@ pub fn Type(Element: type) type {
     };
 }
 
-fn collectDims(Res: type, AnyArgs: type) []const usize {
-    assert(is(util.Deref(Res)));
-    return dim._union(util.Deref(Res).dims, args.collectDims(AnyArgs));
-}
-
-fn collectSize(res: anytype, anyargs: anytype) coords.Type(collectDims(@TypeOf(res), @TypeOf(anyargs))) {
-    assert(is(util.Deref(@TypeOf(res))));
-    var size = coords.initSize(collectDims(@TypeOf(res), @TypeOf(anyargs)));
-    coords.collectSize(&size, res);
-    args.collectSize(&size, anyargs);
-    return size;
-}
-
-fn DenseType(Elem: type, comptime dimensions: []const usize) type {
-    if (!dim._isSet(dimensions)) @compileError("dimensions must be unique");
+fn DenseType(Elem: type, comptime dimensions: Dims) type {
     return packed struct {
         const Tensor = @This();
         pub const Element = Elem;
@@ -67,23 +53,28 @@ fn DenseType(Elem: type, comptime dimensions: []const usize) type {
         offset: usize,
         vals: util.MultiSlice(Element),
 
-        pub inline fn init(size: []const usize, allocator: Allocator) !Tensor {
+        pub fn init(size: []const usize, allocator: Allocator) !Tensor {
             const sz = Position.from(size);
-            assert(sz.cnt() > 0);
+            assert(sz.mul() > 0); // must alloc atleast 1 element
             return Tensor{
-                .vals = try util.MultiSlice(Element).init(sz.cnt(), allocator),
+                .vals = try util.MultiSlice(Element).init(sz.mul(), allocator),
                 .incr = sz.inc(),
                 .offset = 0,
                 .size = sz,
             };
         }
 
-        pub fn deinit(a: Tensor, allocator: Allocator) void {
-            a.vals.deinit(allocator);
+        pub fn reinit(a: *Tensor, size: []const usize, allocator: Allocator) !void {
+            const sz = Position.from(size);
+            assert(sz.mul() > 0); // must alloc atleast 1 element
+            try a.vals.ensureCapacity(sz.mul(), allocator);
+            a.incr = sz.inc();
+            a.offset = 0;
+            a.size = sz;
         }
 
-        pub fn ensureCapacity(a: *Tensor, n: usize, allocator: Allocator) !void {
-            try a.vals.ensureCapacity(n, allocator);
+        pub fn deinit(a: Tensor, allocator: Allocator) void {
+            a.vals.deinit(allocator);
         }
 
         fn ind(a: Tensor, pos: Position) usize {
@@ -103,13 +94,13 @@ fn DenseType(Elem: type, comptime dimensions: []const usize) type {
         }
 
         /// lazy swap of dimensions i and j
-        pub fn t(a: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dim._swap(dims, i, j)) {
+        pub fn t(a: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dims.swap(i, j)) {
             return @bitCast(a);
         }
 
         /// lazily restrict the coordinate in dim d of a tensor a
-        pub fn sub(a: Tensor, comptime d: usize, start: usize, size: usize) Tensor {
-            const i = dim._index(dims, d).?; //d must be in dims
+        pub fn clamp(a: Tensor, comptime d: usize, start: usize, size: usize) Tensor {
+            const i = dims.index(d).?; //d must be in dims
             assert(start + size <= a.size.vec[i]); //out of bounds
             var res = a;
             res.size.vec[i] = size;
@@ -119,59 +110,86 @@ fn DenseType(Elem: type, comptime dimensions: []const usize) type {
 
         /// lazily fix the coordinate in dim d of a tensor a
         /// this returns a tensor of lower dimension
-        pub fn fix(a: Tensor, comptime d: usize, coord: usize) DenseType(Element, dim._sub(dims, &.{d})) {
-            const i = dim._index(dims, d).?; //d must be in dims
+        pub fn sub(a: Tensor, comptime d: usize, coord: usize) DenseType(Element, dims.sub(Dims.from(&.{d}))) {
+            const i = dims.index(d).?; //d must be in dims
             assert(coord <= a.size.vec[i]); //out of bounds
-            var res: DenseType(Element, dim._sub(dims, &.{d})) = undefined;
-            res.vals = a.vals;
-            res.offset = a.offset + coord * a.incr.vec[i];
-            inline for (0..dims.len - 1) |j| { //TODO use shuffle
-                res.size.vec[j] = a.size.vec[if (j < i) j else j + 1];
-                res.incr.vec[j] = a.incr.vec[if (j < i) j else j + 1];
-            }
-            return res;
+            return .{
+                .vals = a.vals,
+                .offset = a.offset + coord * a.incr.vec[i],
+                .size = Position.cut(a.size, d),
+                .incr = Position.cut(a.incr, d),
+            };
         }
 
         /// res <- red(ew(anyargs))
-        pub fn f(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Return(ew, @TypeOf(anyargs), void) {
-            const AnyArgs = @TypeOf(anyargs);
-            const dims_args = args.collectDims(AnyArgs);
-            const dims_total = dim._union(dims, dims_args);
-            return res.fInternal(red, ew, anyargs, dims_total);
+        pub fn f(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).Return(ew, void) {
+            const Args = args.Type(@TypeOf(anyargs));
+            return res.fInternal(red, ew, anyargs, dims.unite(Args.dims));
         }
 
-        /// TODO: incooperate simd.zig whereever possible
-        fn fInternal(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype, comptime dims_order: []const usize) args.Return(ew, @TypeOf(anyargs), void) {
-            const AnyArgs = @TypeOf(anyargs);
-            const dims_args = args.collectDims(AnyArgs);
-            const dims_total = dim._union(dims, dims_args);
-            assert(dim._equal(dims_total, dims_order)); //dims_order must match dimensions of the tensor operation
-            const dims_fill = dim._sub(dims_order, dims_args);
-            const dims_red = dim._sub(dims_order, dims);
-            const dims_calc = dim._sub(dim._sub(dims_order, dims_fill), dims_red);
-            assert(args.validInplace(res, anyargs)); //inplace operation not possible
-            const size = collectSize(res, anyargs);
-            var a = args.init(anyargs);
+        /// res <- red(ew(anyargs))
+        fn fInternal(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype, comptime dims_order: Dims) args.Type(@TypeOf(anyargs)).Return(ew, void) {
+            const Args = args.Type(@TypeOf(anyargs));
+            const dims_total = dims.unite(Args.dims);
+            assert(dims_total.equal(dims_order)); //dims_order must match dimensions of the tensor operation
+            const dims_fill = dims_order.sub(Args.dims);
+            const dims_red = dims_order.sub(dims);
+            const dims_calc = dims_order.sub(dims_fill).sub(dims_red);
+            assert(validInplace(res, anyargs)); //inplace operation not valid
+            const size = res.collectSize(anyargs);
+            var a = Args.init(anyargs);
             var i: coords.Type(dims_total) = undefined;
-            coords.reset(&i, dims_calc);
+            i.reset(dims_calc);
             while (true) {
-                coords.reset(&i, dims_red);
-                args.set(anyargs, &a, &i);
-                const res_red_err = @call(.auto, ew, a);
-                var res_red = if (util.ErrorSet(ew, @TypeOf(a))) |_| try res_red_err else res_red_err;
-                while (dims_red.len > 0 and coords.next(&i, &size, dims_red)) {
-                    args.set(anyargs, &a, &i);
-                    const res_ew_err = @call(.auto, ew, a);
-                    const res_ew = if (util.ErrorSet(ew, @TypeOf(a))) |_| try res_ew_err else res_ew_err;
+                i.reset(dims_red);
+                a.set(anyargs, &i.arr);
+                const res_red_err = a.call(ew);
+                var res_red = if (util.ErrorSet(@TypeOf(res_red_err))) |_| try res_red_err else res_red_err;
+                while (dims_red.len > 0 and i.next(size, dims_red)) {
+                    a.set(anyargs, &i.arr);
+                    const res_ew_err = a.call(ew);
+                    const res_ew = if (util.ErrorSet(@TypeOf(res_ew_err))) |_| try res_ew_err else res_ew_err;
                     res_red = red(res_red, res_ew);
                 }
-                coords.reset(&i, dims_fill);
+                i.reset(dims_fill);
                 while (true) {
-                    res.set(&i, res_red);
-                    if (!coords.next(&i, &size, dims_fill)) break;
+                    res.set(&i.arr, res_red);
+                    if (!i.next(size, dims_fill)) break;
                 }
-                if (!coords.next(&i, &size, dims_calc)) break;
+                if (!i.next(size, dims_calc)) break;
             }
+        }
+
+        inline fn collectDims(AnyArgs: type) Dims {
+            comptime {
+                return dims.unite(args.Type(AnyArgs).dims);
+            }
+        }
+
+        fn collectSize(res: Tensor, anyargs: anytype) coords.Type(collectDims(@TypeOf(anyargs))) {
+            var size = coords.Type(collectDims(@TypeOf(anyargs))).zero;
+            size.collectSize(res);
+            size.collectSizeMany(anyargs);
+            return size;
+        }
+
+        /// TODO: improve
+        /// as of now it is to conservative when using sub tensors
+        /// and incorrect when manipulating the underlying MultiSlices
+        fn validInplace(res: Tensor, anyargs: anytype) bool { //TODO: improve
+            if (Tensor.dims.len == 0) return true;
+            const AnyArgs = @TypeOf(anyargs);
+            inline for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
+                const AnyArg = field_anyargs.type;
+                if (is(AnyArg)) {
+                    const anyarg = @field(anyargs, field_anyargs.name);
+                    if (std.meta.eql(anyarg.vals, res.vals)) { // inplace deteted
+                        if (AnyArg != Tensor) return false;
+                        if (!std.meta.eql(anyarg, res)) return false;
+                    }
+                }
+            }
+            return true;
         }
     };
 }
@@ -252,22 +270,22 @@ test "tensor sub/fix" {
     a.set(&.{ 1, 0 }, 4);
     a.set(&.{ 1, 1 }, 5);
     a.set(&.{ 1, 2 }, 6);
-    const sub = a.sub(1, 1, 2);
-    try expect(sub.vals.ptr == a.vals.ptr);
-    try expect(sub.offset == 2);
-    try expect(sub.at(&.{ 0, 0 }) == 2);
-    try expect(sub.at(&.{ 0, 1 }) == 3);
-    try expect(sub.at(&.{ 1, 0 }) == 5);
-    try expect(sub.at(&.{ 1, 1 }) == 6);
+    const b = a.clamp(1, 1, 2);
+    try expect(b.vals.ptr == a.vals.ptr);
+    try expect(b.offset == 2);
+    try expect(b.at(&.{ 0, 0 }) == 2);
+    try expect(b.at(&.{ 0, 1 }) == 3);
+    try expect(b.at(&.{ 1, 0 }) == 5);
+    try expect(b.at(&.{ 1, 1 }) == 6);
 
-    const fix = a.fix(0, 1);
-    const V = @TypeOf(fix);
+    const c = a.sub(0, 1);
+    const V = @TypeOf(c);
     try expect(V.dims.len == 1);
-    try expect(V.dims[0] == 1);
-    try expect(fix.vals.ptr == a.vals.ptr);
-    try expect(fix.offset == 1);
-    try expect(fix.size.vec[0] == 3);
-    try expect(fix.at(&.{ 100, 0 }) == 4);
-    try expect(fix.at(&.{ 100, 1 }) == 5);
-    try expect(fix.at(&.{ 100, 2 }) == 6);
+    try expect(V.dims.ptr[0] == 1);
+    try expect(c.vals.ptr == a.vals.ptr);
+    try expect(c.offset == 1);
+    try expect(c.size.vec[0] == 3);
+    try expect(c.at(&.{ 100, 0 }) == 4);
+    try expect(c.at(&.{ 100, 1 }) == 5);
+    try expect(c.at(&.{ 100, 2 }) == 6);
 }

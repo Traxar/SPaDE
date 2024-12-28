@@ -1,21 +1,25 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const assert = std.debug.assert;
-const dim = @import("dimens.zig");
+const Dims = @import("dims.zig").Type;
 
-/// n-dimensional position
-pub fn Type(comptime dims: []const usize) type {
+/// n-dimensional Index
+pub fn Type(comptime dims: Dims) type {
     return packed struct {
         pub const Position = @This();
         vec: @Vector(dims.len, usize),
 
         pub fn from(coord: []const usize) Position {
-            assert(dims.len == 0 or coord.len > dim._max(dims)); //not enough coordinates provided
-            var res: Position = undefined;
-            inline for (dims, 0..) |d, i| {
-                res.vec[i] = coord[d];
-            }
-            return res;
+            if (dims.len == 0) return undefined;
+            assert(coord.len > dims.max()); //not enough coordinates provided
+            const mask = comptime mask: {
+                var m: @Vector(dims.len, i32) = undefined;
+                for (dims.slice(), 0..) |d, i| {
+                    m[i] = d;
+                }
+                break :mask m;
+            };
+            return .{ .vec = @shuffle(usize, coord[0 .. dims.max() + 1].*, undefined, mask) };
         }
 
         /// increment
@@ -42,8 +46,22 @@ pub fn Type(comptime dims: []const usize) type {
         }
 
         /// number of entries
-        pub fn cnt(size: Position) usize {
+        pub fn mul(size: Position) usize {
             return if (dims.len > 0) @reduce(.Mul, size.vec) else 1;
+        }
+
+        /// remove dimension d
+        pub fn cut(a: Position, comptime d: usize) Type(dims.sub(Dims.from(&.{d}))) {
+            const i = dims.index(d);
+            assert(i != null); //d must be in dims
+            const mask = comptime mask: {
+                var m: @Vector(dims.len - 1, i32) = undefined;
+                for (0..dims.len - 1) |j| {
+                    m[j] = if (j < i.?) j else j + 1;
+                }
+                break :mask m;
+            };
+            return .{ .vec = @shuffle(usize, a.vec, undefined, mask) };
         }
     };
 }

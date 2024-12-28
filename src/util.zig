@@ -17,12 +17,16 @@ test {
     try expect(Deref(*usize) == usize);
 }
 
-/// ErrorSet of the function `f` given arguments of type `Args`.
-/// `null` if f does not error.
-pub fn ErrorSet(comptime f: anytype, comptime Args: type) ?type {
+/// ReturnType of the function `f` given arguments of type `Args`.
+pub fn ReturnType(comptime f: anytype, comptime Args: type) type {
     const args: Args = undefined;
-    const return_type = @TypeOf(@call(.auto, f, args));
-    return switch (@typeInfo(return_type)) {
+    return @TypeOf(@call(.auto, f, args));
+}
+
+/// ErrorSet of the type `T`.
+/// `null` if T contains no error.
+pub fn ErrorSet(T: type) ?type {
+    return switch (@typeInfo(T)) {
         .ErrorUnion => |error_union| error_union.error_set,
         else => null,
     };
