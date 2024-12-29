@@ -21,12 +21,15 @@ pub inline fn is(T: type) bool {
 
 pub fn Type(Element: type) type {
     return packed struct {
-        pub fn Dense(comptime dimensions: []const usize) type {
-            return DenseType(Element, Dims.from(dimensions));
+        /// dense tensor with dimensions `dims`
+        pub fn Dense(comptime dims: []const usize) type {
+            return DenseType(Element, Dims.from(dims));
         }
 
         //TODO: pub fn Sparse()
 
+        /// <- red(ew(anyargs))
+        /// used for operations that result in a scalar
         pub fn f(comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).ErrorWrap(ew, Element) {
             const val = util.MultiSlice(Element)._init(1);
             const res = Dense(&.{}){
@@ -41,11 +44,11 @@ pub fn Type(Element: type) type {
     };
 }
 
-fn DenseType(Elem: type, comptime dimensions: Dims) type {
+fn DenseType(_Element: type, comptime _dims: Dims) type {
     return packed struct {
         const Tensor = @This();
-        pub const Element = Elem;
-        pub const dims = dimensions;
+        pub const Element = _Element;
+        pub const dims = _dims;
 
         const Position = position.Type(dims);
         size: Position,
