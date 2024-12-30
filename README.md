@@ -10,7 +10,27 @@ a library for **SP**arse **a**nd **DE**nse tensor operations.
 
 ## Installation
 
-TODO: make demo app. Use it to test and document installation
+in your zig-project run:
+
+  zig fetch --save https://github.com/Traxar/SPaDE/archive/refs/tags/v0.0.1.tar.gz
+
+Then add `spade` as an import to your root modules in `build.zig`:
+
+```zig
+fn build(b: *std.Build) void {
+    // set build options ...
+
+    const spade = b.dependency("spade", .{});
+
+    // define lib ...
+
+    lib.root_module.addImport("spade", spade.module("spade"));
+
+    // define exe ...
+
+    exe.root_module.addImport("spade", spade.module("spade"));
+}
+```
 
 ## Usage
 

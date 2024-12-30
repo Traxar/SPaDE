@@ -1,3 +1,1 @@
-test {
-    _ = @import("tensor.zig");
-}
+pub const tensor = @import("tensor.zig");
