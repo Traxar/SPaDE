@@ -106,6 +106,8 @@ pub fn main() !void {
 }
 ```
 
+you can find this demo project [here](https://github.com/Traxar/SPaDE-demo)
+
 ## Dependencies
 
 - `zig 0.13.0`
