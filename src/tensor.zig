@@ -152,11 +152,11 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
                 i.reset(dims_red);
                 a.set(anyargs, &i.arr);
                 const res_red_err = a.call(ew);
-                var res_red = if (util.ErrorSet(@TypeOf(res_red_err))) |_| try res_red_err else res_red_err;
+                var res_red: Element = if (util.ErrorSet(@TypeOf(res_red_err))) |_| try res_red_err else res_red_err;
                 while (dims_red.len > 0 and i.next(size, dims_red)) {
                     a.set(anyargs, &i.arr);
                     const res_ew_err = a.call(ew);
-                    const res_ew = if (util.ErrorSet(@TypeOf(res_ew_err))) |_| try res_ew_err else res_ew_err;
+                    const res_ew: Element = if (util.ErrorSet(@TypeOf(res_ew_err))) |_| try res_ew_err else res_ew_err;
                     res_red = red(res_red, res_ew);
                 }
                 i.reset(dims_fill);
