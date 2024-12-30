@@ -22,10 +22,6 @@ fn build(b: *std.Build) void {
 
     const spade = b.dependency("spade", .{});
 
-    // define lib ...
-
-    lib.root_module.addImport("spade", spade.module("spade"));
-
     // define exe ...
 
     exe.root_module.addImport("spade", spade.module("spade"));
