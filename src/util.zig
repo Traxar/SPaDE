@@ -42,7 +42,7 @@ inline fn _alloc(Element: type, comptime length: usize) []Element {
 fn MultiPointer(Element: type) type {
     const info_E = @typeInfo(Element);
     return switch (info_E) {
-        .Struct => |s| rec: {
+        .Struct => |s| _: {
             var fields_MP: [s.fields.len]std.builtin.Type.StructField = undefined;
             for (&fields_MP, s.fields) |*field_MP, field_E| {
                 field_MP.* = .{
@@ -53,7 +53,7 @@ fn MultiPointer(Element: type) type {
                     .type = MultiPointer(field_E.type),
                 };
             }
-            break :rec @Type(std.builtin.Type{ .Struct = .{
+            break :_ @Type(std.builtin.Type{ .Struct = .{
                 .layout = .@"packed",
                 .fields = &fields_MP,
                 .decls = &[_]std.builtin.Type.Declaration{},
@@ -96,12 +96,12 @@ pub fn MultiSlice(comptime Element: type) type {
             var slice: Slice = undefined;
             slice.len = n;
             slice.ptr = switch (@typeInfo(Element)) {
-                .Struct => |s| rec: {
+                .Struct => |s| _: {
                     var res: MultiPointer(Element) = undefined;
                     inline for (s.fields) |field| {
                         @field(res, field.name) = (try MultiSlice(field.type).init(n, allocator)).ptr;
                     }
-                    break :rec res;
+                    break :_ res;
                 },
                 .Vector => |v| (try allocator.alloc(v.child, n)).ptr,
                 else => (try allocator.alloc(Element, n)).ptr,
@@ -114,12 +114,12 @@ pub fn MultiSlice(comptime Element: type) type {
             var slice: Slice = undefined;
             slice.len = n;
             slice.ptr = switch (@typeInfo(Element)) {
-                .Struct => |s| rec: {
+                .Struct => |s| _: {
                     var res: MultiPointer(Element) = undefined;
                     inline for (s.fields) |field| {
                         @field(res, field.name) = MultiSlice(field.type)._init(n).ptr;
                     }
-                    break :rec res;
+                    break :_ res;
                 },
                 .Vector => |v| _alloc(v.child, n).ptr,
                 else => _alloc(Element, n).ptr,
@@ -162,12 +162,12 @@ pub fn MultiSlice(comptime Element: type) type {
         pub fn at(slice: Slice, i: usize) Element {
             assert(i + simd_size <= slice.len);
             return switch (@typeInfo(Element)) {
-                .Struct => |s| rec: {
+                .Struct => |s| _: {
                     var element: Element = undefined;
                     inline for (s.fields) |field| {
                         @field(element, field.name) = slice.sub(field).at(i);
                     }
-                    break :rec element;
+                    break :_ element;
                 },
                 .Vector => slice.ptr[i..][0..simd_size].*,
                 else => slice.ptr[i],

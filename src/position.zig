@@ -12,12 +12,12 @@ pub fn Type(comptime dims: Dims) type {
         pub fn from(coord: []const usize) Position {
             if (dims.len == 0) return undefined;
             assert(coord.len > dims.max()); //not enough coordinates provided
-            const mask = comptime mask: {
+            const mask = comptime _: {
                 var m: @Vector(dims.len, i32) = undefined;
                 for (dims.slice(), 0..) |d, i| {
                     m[i] = d;
                 }
-                break :mask m;
+                break :_ m;
             };
             return .{ .vec = @shuffle(usize, coord[0 .. dims.max() + 1].*, undefined, mask) };
         }
@@ -54,12 +54,12 @@ pub fn Type(comptime dims: Dims) type {
         pub fn cut(a: Position, comptime d: usize) Type(dims.sub(Dims.from(&.{d}))) {
             const i = dims.index(d);
             assert(i != null); //d must be in dims
-            const mask = comptime mask: {
+            const mask = comptime _: {
                 var m: @Vector(dims.len - 1, i32) = undefined;
                 for (0..dims.len - 1) |j| {
                     m[j] = if (j < i.?) j else j + 1;
                 }
-                break :mask m;
+                break :_ m;
             };
             return .{ .vec = @shuffle(usize, a.vec, undefined, mask) };
         }

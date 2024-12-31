@@ -5,7 +5,7 @@ const assert = std.debug.assert;
 /// recurrsive vector struct
 pub fn Vector(len: comptime_int, Element: type) type {
     return switch (@typeInfo(Element)) {
-        .Struct => |s| rec: {
+        .Struct => |s| _: {
             var res_fields: [s.fields.len]std.builtin.Type.StructField = undefined;
             for (s.fields, &res_fields) |field, *res_field| {
                 res_field.* = .{
@@ -16,7 +16,7 @@ pub fn Vector(len: comptime_int, Element: type) type {
                     .type = Vector(len, field.type),
                 };
             }
-            break :rec @Type(std.builtin.Type{
+            break :_ @Type(std.builtin.Type{
                 .Struct = .{
                     .layout = s.layout,
                     .fields = &res_fields,
@@ -45,14 +45,14 @@ test "Vector" {
 /// retrieve the simd length of a recurrsive vector struct
 pub fn length(Element: type) comptime_int {
     return switch (@typeInfo(Element)) {
-        .Struct => |s| rec: {
+        .Struct => |s| _: {
             var res: ?comptime_int = null;
             for (s.fields) |field| {
                 const now = length(field.type);
                 res = if (res) |sofar| sofar else now;
                 if (res != now) @compileError("simd sizes do not match");
             }
-            break :rec res.?;
+            break :_ res.?;
         },
         .Vector => |v| v.len,
         else => 1,
@@ -72,12 +72,12 @@ test "length" {
 pub fn splat(len: comptime_int, element: anytype) Vector(len, @TypeOf(element)) {
     assert(length(@TypeOf(element)) == 1);
     return switch (@typeInfo(@TypeOf(element))) {
-        .Struct => |s| rec: {
+        .Struct => |s| _: {
             var res: Vector(len, @TypeOf(element)) = undefined;
             inline for (s.fields) |field| {
                 @field(res, field.name) = splat(len, @field(element, field.name));
             }
-            break :rec res;
+            break :_ res;
         },
         .Vector => @splat(@bitCast(element)),
         else => @splat(element),
@@ -107,13 +107,13 @@ test "splat" {
 /// based on std heuristics
 pub fn suggestLength(Element: type) comptime_int {
     return switch (@typeInfo(Element)) {
-        .Struct => |s| rec: {
+        .Struct => |s| _: {
             var res: ?comptime_int = null;
             for (s.fields) |field| {
                 const now = suggestLength(field.type);
                 res = if (res) |sofar| @min(sofar, now) else now;
             }
-            break :rec res;
+            break :_ res;
         },
         .Vector => |v| std.simd.suggestVectorLength(v.child),
         else => std.simd.suggestVectorLength(Element),

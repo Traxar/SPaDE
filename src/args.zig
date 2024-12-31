@@ -60,13 +60,13 @@ pub fn Type(AnyArgs: type) type {
             }
         }
 
-        pub const dims = dims: {
+        pub const dims = _: {
             var res = Dims.from(&.{});
             for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
                 if (!tensor.is(field_anyargs.type)) continue;
                 res = res.unite(field_anyargs.type.dims);
             }
-            break :dims res;
+            break :_ res;
         };
 
         /// if function `f` errors, wrap `Base` with its error
