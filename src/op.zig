@@ -1,11 +1,46 @@
+//! Note: these functions have to work for @Vector inputs as well as scalar inputs
+//! Note: dereferencing not needed as these functions are not field decls
 const std = @import("std");
 const expect = std.testing.expect;
 const assert = std.debug.assert;
 
 const simd = @import("simd.zig");
 
-/// Note: these functions have to work for @Vector inputs as well as scalar inputs
-/// Note: dereferencing not needed as these functions are not field decls
+pub fn @"and"(a: anytype, b: anytype) @TypeOf(a) {
+    if (@TypeOf(a) != @TypeOf(b)) @compileError("exptected matching types");
+    if (@TypeOf(a) == bool) {
+        return a and b;
+    } else {
+        return @select(bool, a, b, a);
+    }
+}
+
+pub fn @"or"(a: anytype, b: anytype) @TypeOf(a) {
+    if (@TypeOf(a) != @TypeOf(b)) @compileError("exptected matching types");
+    if (@TypeOf(a) == bool) {
+        return a or b;
+    } else {
+        return @select(bool, a, a, b);
+    }
+}
+
+pub fn not(a: anytype) @TypeOf(a) {
+    const A = @TypeOf(a);
+    if (A == bool) {
+        return !a;
+    } else {
+        return @select(bool, a, @as(A, @splat(false)), @as(A, @splat(true)));
+    }
+}
+
+test "boolean" {
+    const a: @Vector(4, bool) = .{ false, false, true, true };
+    const b: @Vector(4, bool) = .{ false, true, false, true };
+
+    try expect(@reduce(.And, @"and"(a, b) == @as(@Vector(4, bool), .{ false, false, false, true })));
+    try expect(@reduce(.And, @"or"(a, not(b)) == @as(@Vector(4, bool), .{ true, false, true, true })));
+}
+
 pub fn eq(a: anytype, b: anytype) @TypeOf(a == b) {
     return a == b;
 }

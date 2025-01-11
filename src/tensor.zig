@@ -123,8 +123,21 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
             return .{
                 .vals = a.vals,
                 .offset = a.offset + coord * a.incr.vec[i],
-                .size = Position.cut(a.size, d),
-                .incr = Position.cut(a.incr, d),
+                .size = a.size.cut(d),
+                .incr = a.incr.cut(d),
+            };
+        }
+
+        pub fn diag(a: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dims.sub(Dims.from(&.{j}))) {
+            var size = a.size.cut(j);
+            size.set(i, @min(a.size.at(i), a.size.at(j)));
+            var incr = a.incr.cut(j);
+            incr.set(i, a.incr.at(i) + a.incr.at(j));
+            return .{
+                .vals = a.vals,
+                .offset = a.offset,
+                .size = size,
+                .incr = incr,
             };
         }
 
@@ -302,4 +315,24 @@ test "tensor sub/fix" {
     try expect(c.at(&.{ 0, 0 }) == 4);
     try expect(c.at(&.{ 0, 1 }) == 5);
     try expect(c.at(&.{ 0, 2 }) == 6);
+}
+
+test "tensor diag" {
+    const op = @import("op.zig");
+    const ally = std.testing.allocator;
+    const T = Type(usize);
+    const V = T.Dense(&.{0});
+    const M = T.Dense(&.{ 0, 1 });
+    const a = try V.init(&.{4}, ally);
+    defer a.deinit(ally);
+    for (0..a.size.at(0)) |i| {
+        a.set(&.{i}, i + 1);
+    }
+    const b = try M.init(&.{ a.size.at(0), a.size.at(0) }, ally);
+    defer b.deinit(ally);
+    b.f(undefined, op.add, .{ a, a.t(0, 1) });
+    a.f(undefined, op.mul, .{ a, 2 });
+    const c: V = b.diag(0, 1);
+
+    try expect(Type(bool).f(op.@"and", op.eq, .{ a, c }));
 }

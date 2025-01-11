@@ -22,6 +22,16 @@ pub fn Type(comptime dims: Dims) type {
             return .{ .vec = @shuffle(usize, coord[0 .. dims.max() + 1].*, undefined, mask) };
         }
 
+        /// value at dimension
+        pub fn at(pos: Position, comptime d: usize) usize {
+            return pos.vec[dims.index(d).?];
+        }
+
+        /// set value at dimension
+        pub fn set(pos: *Position, comptime d: usize, new: usize) void {
+            pos.vec[dims.index(d).?] = new;
+        }
+
         /// increment
         pub fn inc(size: Position) Position {
             var res: Position = undefined;
