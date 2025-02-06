@@ -81,23 +81,31 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
             a.vals.deinit(allocator);
         }
 
-        /// position `pos` to index into `a.vals`
-        fn ind(a: Tensor, pos: Position) usize {
-            return a.offset + a.incr.ind(pos);
+        /// get index into `a.vals` from position `pos`
+        fn indFrom(a: Tensor, pos: Position) usize {
+            return a.offset + a.incr.indFrom(pos);
+        }
+
+        /// get position of index `ind` if existent else null
+        fn posFrom(a: Tensor, ind: usize) ?Position {
+            if (a.offset > ind) return null;
+            const pos = a.incr.posFrom(ind - a.offset) orelse return null;
+            if (!pos.lt(a.size)) return null;
+            return pos;
         }
 
         /// value of tensor `a` at coordinates `coord`
         pub fn at(a: Tensor, coord: []const usize) Element {
             const pos = Position.from(coord);
             assert(pos.lt(a.size)); //out of bounds
-            return a.vals.at(a.ind(pos));
+            return a.vals.at(a.indFrom(pos));
         }
 
         /// set value of tensor `a` at coordinates `coord`
         pub fn set(a: Tensor, coord: []const usize, element: Element) void {
             const pos = Position.from(coord);
             assert(pos.lt(a.size)); //out of bounds
-            a.vals.set(a.ind(pos), element);
+            a.vals.set(a.indFrom(pos), element);
         }
 
         /// lazily swap dimensions `i` and `j`
@@ -128,7 +136,13 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
             };
         }
 
+        /// lazily take the diagonal of dimensions i and j
+        /// the result is a tensor without dimension j
         pub fn diag(a: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dims.sub(Dims.from(&.{j}))) {
+            assert(i != j);
+            assert(dims.index(i) != null);
+            if (dims.index(j) == null) return a;
+            if (dims.index(i).? < dims.index(j).?) return a.diag(j, i).t(i, j);
             var size = a.size.cut(j);
             size.set(i, @min(a.size.at(i), a.size.at(j)));
             var incr = a.incr.cut(j);
@@ -156,28 +170,28 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
             const dims_fill = dims_order.sub(Args.dims);
             const dims_red = dims_order.sub(dims);
             const dims_calc = dims_order.sub(dims_fill).sub(dims_red);
-            assert(validInplace(res, anyargs)); //inplace operation not valid
-            const size = res.collectSize(anyargs);
+            assert(res.allValidInplace(anyargs, dims_calc)); //inplace operation not valid
+            const bounds = res.collectBounds(anyargs);
             var a = Args.init(anyargs);
-            var i: coords.Type(dims_total) = undefined;
-            i.reset(dims_calc);
+            var coord_iter: coords.Type(dims_total) = undefined;
+            coord_iter.reset(dims_calc);
             while (true) {
-                i.reset(dims_red);
-                a.set(anyargs, &i.arr);
+                coord_iter.reset(dims_red);
+                a.set(anyargs, &coord_iter.arr);
                 const res_red_err = a.call(ew);
                 var res_red: Element = if (util.ErrorSet(@TypeOf(res_red_err))) |_| try res_red_err else res_red_err;
-                while (dims_red.len > 0 and i.next(size, dims_red)) {
-                    a.set(anyargs, &i.arr);
+                while (dims_red.len > 0 and coord_iter.next(bounds, dims_red)) {
+                    a.set(anyargs, &coord_iter.arr);
                     const res_ew_err = a.call(ew);
                     const res_ew: Element = if (util.ErrorSet(@TypeOf(res_ew_err))) |_| try res_ew_err else res_ew_err;
                     res_red = red(res_red, res_ew);
                 }
-                i.reset(dims_fill);
+                coord_iter.reset(dims_fill);
                 while (true) {
-                    res.set(&i.arr, res_red);
-                    if (!i.next(size, dims_fill)) break;
+                    res.set(&coord_iter.arr, res_red);
+                    if (!coord_iter.next(bounds, dims_fill)) break;
                 }
-                if (!i.next(size, dims_calc)) break;
+                if (!coord_iter.next(bounds, dims_calc)) break;
             }
         }
 
@@ -190,30 +204,50 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
 
         /// total size of tensor `res` and arguments `anyargs`
         /// asserts matching sizes
-        fn collectSize(res: Tensor, anyargs: anytype) coords.Type(collectDims(@TypeOf(anyargs))) {
-            var size = coords.Type(collectDims(@TypeOf(anyargs))).zero;
-            size.collectSize(res);
-            size.collectSizeMany(anyargs);
-            return size;
+        fn collectBounds(res: Tensor, anyargs: anytype) coords.Type(collectDims(@TypeOf(anyargs))) {
+            var bounds = coords.Type(collectDims(@TypeOf(anyargs))).zero;
+            bounds.collectBounds(res);
+            bounds.collectBoundsMany(anyargs);
+            return bounds;
         }
 
-        /// TODO: improve
-        /// as of now it is to conservative when using sub tensors
-        /// and incorrect when manipulating the underlying MultiSlices
-        fn validInplace(res: Tensor, anyargs: anytype) bool { //TODO: improve
+        fn allValidInplace(res: Tensor, anyargs: anytype, comptime dims_calc: Dims) bool {
             if (Tensor.dims.len == 0) return true;
             const AnyArgs = @TypeOf(anyargs);
             inline for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
-                const AnyArg = field_anyargs.type;
-                if (is(AnyArg)) {
-                    const anyarg = @field(anyargs, field_anyargs.name);
-                    if (std.meta.eql(anyarg.vals, res.vals)) { // inplace deteted
-                        if (AnyArg != Tensor) return false;
-                        if (!std.meta.eql(anyarg, res)) return false;
-                    }
-                }
+                if (!res.validInplace(@field(anyargs, field_anyargs.name), dims_calc)) return false;
             }
             return true;
+        }
+
+        /// TODO: improve
+        /// as of now it is incorrect when manipulating the underlying MultiSlices
+        fn validInplace(res: Tensor, arg: anytype, comptime dims_calc: Dims) bool {
+            const Arg = @TypeOf(arg);
+            // quick checks
+            if (!is(Arg)) return true;
+            if (!std.meta.eql(res.vals, arg.vals)) return true;
+            if (Arg == Tensor and std.meta.eql(res, arg)) return true;
+            // actual check
+            const heuristic_res = res.size.mul() * Arg.dims.len;
+            const heuristic_arg = arg.size.mul() * dims.len;
+            return if (heuristic_res <= heuristic_arg)
+                res.checkValidInplace(arg, dims_calc)
+            else
+                arg.checkValidInplace(res, dims_calc);
+        }
+
+        fn checkValidInplace(res: Tensor, arg: anytype, comptime dims_calc: Dims) bool {
+            var pos_res = Position.zero;
+            while (true) {
+                const index = res.indFrom(pos_res);
+                if (arg.posFrom(index)) |pos_arg| {
+                    inline for (dims_calc.slice()) |dim| {
+                        if (pos_arg.at(dim) != pos_res.at(dim)) return false;
+                    }
+                }
+                if (!pos_res.next(res.size)) return true;
+            }
         }
     };
 }
@@ -281,6 +315,38 @@ test "tensor f" {
 
     d = T.f(op.add, op.mul, .{ a, b.t(0, 1) }); //combined
     try expect(d == 45);
+}
+
+test "tensor inplace" {
+    const ally = std.testing.allocator;
+    const T = Type(f32);
+    const V = T.Dense(&.{0});
+    const M = T.Dense(&.{ 0, 1 });
+    const a = try M.init(&.{ 4, 4 }, ally);
+    defer a.deinit(ally);
+
+    try expect(a.checkValidInplace(a, M.dims));
+    try expect(!a.checkValidInplace(a.t(0, 1), M.dims));
+
+    const v = a.sub(0, 1).t(0, 1);
+    try expect(v.checkValidInplace(v, V.dims));
+    try expect(v.checkValidInplace(a.sub(1, 1), V.dims));
+    try expect(!v.checkValidInplace(a.sub(1, 2), V.dims));
+    try expect(v.checkValidInplace(a.sub(0, 2).t(0, 1), V.dims));
+
+    try expect(v.clamp(0, 0, 3).checkValidInplace(v.clamp(0, 0, 3), V.dims));
+    try expect(!v.clamp(0, 1, 3).checkValidInplace(v.clamp(0, 0, 3), V.dims));
+    try expect(!v.clamp(0, 0, 3).checkValidInplace(v.clamp(0, 1, 3), V.dims));
+    try expect(v.clamp(0, 1, 3).checkValidInplace(v.clamp(0, 1, 3), V.dims));
+
+    const b = a.clamp(0, 1, 2).clamp(1, 0, 2);
+    const c = a.clamp(0, 0, 2).clamp(1, 1, 2);
+    try expect(!b.checkValidInplace(c, M.dims));
+    try expect(b.t(0, 1).checkValidInplace(c, M.dims));
+
+    const d = a.diag(0, 1);
+    try expect(!a.checkValidInplace(d, M.dims));
+    try expect(a.checkValidInplace(d, V.dims));
 }
 
 test "tensor sub/fix" {

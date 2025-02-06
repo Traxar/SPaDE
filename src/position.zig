@@ -7,6 +7,7 @@ const Dims = @import("dims.zig").Type;
 pub fn Type(comptime dims: Dims) type {
     return packed struct {
         pub const Position = @This();
+        pub const zero = Position{ .vec = @splat(0) };
         vec: @Vector(dims.len, usize),
 
         pub fn from(coord: []const usize) Position {
@@ -22,9 +23,9 @@ pub fn Type(comptime dims: Dims) type {
             return .{ .vec = @shuffle(usize, coord[0 .. dims.max() + 1].*, undefined, mask) };
         }
 
-        /// value at dimension
+        /// value at dimension `d`, 0 if `d` does not exist
         pub fn at(pos: Position, comptime d: usize) usize {
-            return pos.vec[dims.index(d).?];
+            return if (dims.index(d)) |i| pos.vec[i] else 0;
         }
 
         /// set value at dimension
@@ -44,15 +45,35 @@ pub fn Type(comptime dims: Dims) type {
         }
 
         /// index from position and increment
-        pub fn ind(increment: Position, pos: Position) usize {
+        pub fn indFrom(incr: Position, pos: Position) usize {
             if (dims.len == 0) return 0;
-            return @reduce(.Add, increment.vec * pos.vec);
+            return @reduce(.Add, incr.vec * pos.vec);
+        }
+
+        pub fn posFrom(incr: Position, ind: usize) ?Position {
+            var pos = Position{ .vec = undefined };
+            if (dims.len == 0) return pos;
+            var i = ind;
+            var j: usize = dims.len;
+            while (j > 0) {
+                j -= 1;
+                pos.vec[j] = @divFloor(i, incr.vec[j]);
+                i -= pos.vec[j] * incr.vec[j];
+            }
+            if (i != 0) return null;
+            return pos;
         }
 
         /// all less than
         pub fn lt(pos: Position, size: Position) bool {
             if (dims.len == 0) return true;
             return @reduce(.And, pos.vec < size.vec);
+        }
+
+        /// all equal
+        fn eq(a: Position, b: Position) bool {
+            if (dims.len == 0) return true;
+            return @reduce(.And, a.vec == b.vec);
         }
 
         /// number of entries
@@ -73,5 +94,29 @@ pub fn Type(comptime dims: Dims) type {
             };
             return .{ .vec = @shuffle(usize, a.vec, undefined, mask) };
         }
+
+        pub fn next(iter: *Position, size: Position) bool {
+            inline for (dims.slice()) |dim| {
+                if (iter.at(dim) == size.at(dim) - 1) {
+                    iter.set(dim, 0);
+                } else {
+                    iter.set(dim, iter.at(dim) + 1);
+                    return true;
+                }
+            }
+            return false;
+        }
     };
+}
+
+test "position from index" {
+    const Pos = Type(Dims.from(&.{ 0, 1, 2 }));
+    const size = Pos.from(&.{ 2, 3, 4 });
+    const incr = size.inc();
+    try expect(incr.eq(Pos.from(&.{ 1, 2, 6 })));
+    const pos = Pos.from(&.{ 1, 1, 2 });
+    const ind = incr.indFrom(pos);
+    try expect(ind == 15);
+    const pos_ = incr.posFrom(ind).?;
+    try expect(pos.eq(pos_));
 }

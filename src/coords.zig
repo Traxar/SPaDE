@@ -12,22 +12,22 @@ pub fn Type(dims: Dims) type {
         pub const zero = Coords{ .arr = .{0} ** (dims.max() + 1) };
 
         /// if anyarg is a Tensor collect its size.
-        pub fn collectSize(size: *Coords, anyarg: anytype) void {
+        pub fn collectBounds(bounds: *Coords, anyarg: anytype) void {
             const AnyArg = @TypeOf(anyarg);
             if (!tensor.is(AnyArg)) return;
             inline for (AnyArg.dims.slice(), 0..) |dim, i| {
-                if (size.arr[dim] == 0) {
-                    size.arr[dim] = anyarg.size.vec[i];
+                if (bounds.arr[dim] == 0) {
+                    bounds.arr[dim] = anyarg.size.vec[i];
                 } else {
-                    assert(size.arr[dim] == anyarg.size.vec[i]); //sizes do not match
+                    assert(bounds.arr[dim] == anyarg.size.vec[i]); //bounds must match
                 }
             }
         }
 
-        pub fn collectSizeMany(size: *Coords, anyargs: anytype) void {
+        pub fn collectBoundsMany(bounds: *Coords, anyargs: anytype) void {
             const AnyArgs = @TypeOf(anyargs);
             inline for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
-                size.collectSize(@field(anyargs, field_anyargs.name));
+                bounds.collectBounds(@field(anyargs, field_anyargs.name));
             }
         }
 
