@@ -90,8 +90,7 @@ pub fn MultiSlice(comptime Element: type) type {
             };
         }
 
-        // TODO: fuse into single alloc
-        // FIX: handle alloc faliure correctly
+        // TODO: #4: fuse into single alloc
         pub fn init(n: usize, allocator: Allocator) !Slice {
             var slice: Slice = undefined;
             slice.len = n;

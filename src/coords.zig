@@ -11,7 +11,7 @@ pub fn Type(dims: Dims) type {
 
         pub const zero = Coords{ .arr = .{0} ** (dims.max() + 1) };
 
-        /// if anyarg is a Tensor collect its size.
+        /// if `anyarg` is a tensor add/check its bounds.
         pub fn collectBounds(bounds: *Coords, anyarg: anytype) void {
             const AnyArg = @TypeOf(anyarg);
             if (!tensor.is(AnyArg)) return;

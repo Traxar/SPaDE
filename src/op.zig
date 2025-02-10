@@ -6,8 +6,7 @@ const assert = std.debug.assert;
 
 const simd = @import("simd.zig");
 
-pub fn @"and"(a: anytype, b: anytype) @TypeOf(a) {
-    if (@TypeOf(a) != @TypeOf(b)) @compileError("exptected matching types");
+pub fn @"and"(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
     if (@TypeOf(a) == bool) {
         return a and b;
     } else {
@@ -15,8 +14,7 @@ pub fn @"and"(a: anytype, b: anytype) @TypeOf(a) {
     }
 }
 
-pub fn @"or"(a: anytype, b: anytype) @TypeOf(a) {
-    if (@TypeOf(a) != @TypeOf(b)) @compileError("exptected matching types");
+pub fn @"or"(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
     if (@TypeOf(a) == bool) {
         return a or b;
     } else {

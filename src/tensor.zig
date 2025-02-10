@@ -4,12 +4,12 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const util = @import("util.zig");
 const Dims = @import("dims.zig").Type;
-const position = @import("position.zig");
-const coords = @import("coords.zig");
-const args = @import("args.zig");
+const Pos = @import("position.zig").Type;
+const Coords = @import("coords.zig").Type;
+const Arg = @import("args.zig").Type;
 const simd = @import("simd.zig");
 
-/// true if T is a Tensor
+/// Returns `true` if `T` is a tensor.
 pub inline fn is(T: type) bool {
     comptime {
         if (@typeInfo(T) != .Struct) return false;
@@ -19,18 +19,38 @@ pub inline fn is(T: type) bool {
     }
 }
 
+//const Reduction = fn(anytype, anytype) anytype;
+const Reduction = @TypeOf(struct {
+    fn f(a: anytype, _: @TypeOf(a)) @TypeOf(a) {
+        unreachable;
+    }
+}.f);
+
+/// Returns a base type used for:
+/// - creating tensor types with elements of type `Element`.
+/// - tensor operations with a single scalar output of type `Element`.
 pub fn Type(Element: type) type {
+    if (is(Element)) @compileError("Element must not be a tensor");
     return packed struct {
-        /// dense tensor with dimensions `dims`
+        /// Returns a dense tensor type with dimensions specified by `dims`:
+        /// - `dims.len` specifies the order of the tensor. (ex.: `&.{0, 1}` results in a 2D-tensor aka a matrix)
+        /// - the values of a tensor can be accessed via a multiindex which also has the type `[]usize`
+        /// - the values of `dims` specify, which entries of the multiindex will be used.
+        ///   (ex.: `&.{0, 1}` maps index-`0` and index-`1` onto the matrix, all other/further indices will be ingnored)
+        /// - the order of `dims` specifies the memory layout.
+        ///   (ex.: `&.{0, 1}` when scanning the allocated memory, index-`0` is scanned first before moving to the next value of index-`1`)
         pub fn Dense(comptime dims: []const usize) type {
             return DenseType(Element, Dims.from(dims));
         }
 
-        //TODO: pub fn Sparse()
+        //TODO: #3: pub fn Sparse()
 
-        /// <- red(ew(anyargs))
-        /// used for operations that result in a scalar
-        pub fn f(comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).ErrorWrap(ew, Element) {
+        /// Returns a scalar result of the tensor operation:
+        /// - `args` is an anonymous struct with the arguments of the operation.
+        /// - `ew` is a function which is applied *elementwise*. It takes `args`, with each tensor swapped out for one of its elements,
+        ///   as input and returns `Element` or `!Element`.
+        /// - `red` is a function used to *reduce* the results of `ew` into a single scalar value. It takes two `Element`s as input and returns one `Element`.
+        pub fn f(comptime red: Reduction, comptime ew: anytype, args: anytype) Arg(@TypeOf(args)).ErrorWrap(ew, Element) {
             const val = util.MultiSlice(Element)._init(1);
             const res = Dense(&.{}){
                 .size = undefined,
@@ -38,7 +58,7 @@ pub fn Type(Element: type) type {
                 .offset = 0,
                 .vals = val,
             };
-            res.f(red, ew, anyargs);
+            res.f(red, ew, args);
             return res.at(&.{});
         }
     };
@@ -50,138 +70,152 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
         pub const Element = _Element;
         pub const dims = _dims;
 
-        const Position = position.Type(dims);
+        const Position = Pos(dims);
         size: Position,
         incr: Position,
         offset: usize,
         vals: util.MultiSlice(Element),
 
+        /// Returns a newly allocated tensor with size `size` and `undefined` values.
+        /// - `size` is a multiindex. All entries at an index not in `dims` will be ignored.
+        /// - Free the result by using `deinit`.
+        ///
+        /// (ex.: `Type(f32).Dense(&.{0, 1}).init(&.{2, 3})` tries to allocate a 2x3 matrix)
         pub fn init(size: []const usize, allocator: Allocator) !Tensor {
             const sz = Position.from(size);
-            assert(sz.mul() > 0); // must alloc atleast 1 element
             return Tensor{
                 .vals = try util.MultiSlice(Element).init(sz.mul(), allocator),
-                .incr = sz.inc(),
+                .incr = sz.incFrom(),
                 .offset = 0,
                 .size = sz,
             };
         }
 
-        /// invalidates data
-        pub fn reinit(a: *Tensor, size: []const usize, allocator: Allocator) !void {
+        /// Sets the size of tensor `tensor` to the new size `size`, while reusing the already allocated memory if possible.
+        /// - `size` is a multiindex. All entries at an index not in `dims` will be ignored.
+        /// - invalidates data
+        pub fn reinit(tensor: *Tensor, size: []const usize, allocator: Allocator) !void {
             const sz = Position.from(size);
-            assert(sz.mul() > 0); // must alloc atleast 1 element
-            try a.vals.ensureCapacity(sz.mul(), allocator);
-            a.incr = sz.inc();
-            a.offset = 0;
-            a.size = sz;
+            try tensor.vals.ensureCapacity(sz.mul(), allocator);
+            tensor.incr = sz.incFrom();
+            tensor.offset = 0;
+            tensor.size = sz;
         }
 
-        pub fn deinit(a: Tensor, allocator: Allocator) void {
-            a.vals.deinit(allocator);
+        /// Frees memory allocated by tensor `tensor`.
+        pub fn deinit(tensor: Tensor, allocator: Allocator) void {
+            tensor.vals.deinit(allocator);
         }
 
-        /// get index into `a.vals` from position `pos`
-        fn indFrom(a: Tensor, pos: Position) usize {
-            return a.offset + a.incr.indFrom(pos);
+        /// get index into `tensor.vals` from position `pos`
+        fn indFrom(tensor: Tensor, pos: Position) usize {
+            return tensor.offset + tensor.incr.indFrom(pos);
         }
 
         /// get position of index `ind` if existent else null
-        fn posFrom(a: Tensor, ind: usize) ?Position {
-            if (a.offset > ind) return null;
-            const pos = a.incr.posFrom(ind - a.offset) orelse return null;
-            if (!pos.lt(a.size)) return null;
+        fn posFrom(tensor: Tensor, ind: usize) ?Position {
+            if (tensor.offset > ind) return null;
+            const pos = tensor.incr.posFrom(ind - tensor.offset) orelse return null;
+            if (!pos.lt(tensor.size)) return null;
             return pos;
         }
 
-        /// value of tensor `a` at coordinates `coord`
-        pub fn at(a: Tensor, coord: []const usize) Element {
-            const pos = Position.from(coord);
-            assert(pos.lt(a.size)); //out of bounds
-            return a.vals.at(a.indFrom(pos));
+        /// Returns value of tensor `tensor` at coordinates `coords`.
+        /// - `coord` is a multiindex. All entries at an index not in `dims` will be ignored.
+        pub fn at(tensor: Tensor, coords: []const usize) Element {
+            const pos = Position.from(coords);
+            assert(pos.lt(tensor.size)); //out of bounds
+            return tensor.vals.at(tensor.indFrom(pos));
         }
 
-        /// set value of tensor `a` at coordinates `coord`
-        pub fn set(a: Tensor, coord: []const usize, element: Element) void {
-            const pos = Position.from(coord);
-            assert(pos.lt(a.size)); //out of bounds
-            a.vals.set(a.indFrom(pos), element);
+        /// Sets tensor `tensor` at coordinates `coords` to the new value `value`.
+        /// - `coord` is a multiindex. All entries at an index not in `dims` will be ignored.
+        pub fn set(tensor: Tensor, coords: []const usize, value: Element) void {
+            const pos = Position.from(coords);
+            assert(pos.lt(tensor.size)); //out of bounds
+            tensor.vals.set(tensor.indFrom(pos), value);
         }
 
-        /// lazily swap dimensions `i` and `j`
-        pub fn t(a: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dims.swap(i, j)) {
-            return @bitCast(a);
+        /// Lazily swap dimensions `i` and `j`.
+        /// - this has no cost
+        pub fn t(tensor: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dims.swap(i, j)) {
+            return @bitCast(tensor);
         }
 
-        /// lazily restrict the coordinate in dimension `d` of tensor `a`
-        pub fn clamp(a: Tensor, comptime d: usize, start: usize, size: usize) Tensor {
+        /// Lazily restrict the coordinate of dimension `d` to size `size` starting at `start`.
+        pub fn clamp(tensor: Tensor, comptime d: usize, start: usize, size: usize) Tensor {
+            assert(size > 0);
             const i = dims.index(d).?; //d must be in dims
-            assert(start + size <= a.size.vec[i]); //out of bounds
-            var res = a;
+            assert(start + size <= tensor.size.vec[i]); //out of bounds
+            var res = tensor;
             res.size.vec[i] = size;
-            res.offset += start * a.incr.vec[i];
+            res.offset += start * tensor.incr.vec[i];
             return res;
         }
 
-        /// lazily fix the coordinate in diminsion `d` of tensor `a`
-        /// this returns a tensor of lower dimension
-        pub fn sub(a: Tensor, comptime d: usize, coord: usize) DenseType(Element, dims.sub(Dims.from(&.{d}))) {
+        /// Lazily fix the coordinate in dimension `d` to `coord`.
+        /// - This returns a tensor of lower order.
+        pub fn sub(tensor: Tensor, comptime d: usize, coord: usize) DenseType(Element, dims.sub(Dims.from(&.{d}))) {
             const i = dims.index(d).?; //d must be in dims
-            assert(coord <= a.size.vec[i]); //out of bounds
+            assert(coord <= tensor.size.vec[i]); //out of bounds
             return .{
-                .vals = a.vals,
-                .offset = a.offset + coord * a.incr.vec[i],
-                .size = a.size.cut(d),
-                .incr = a.incr.cut(d),
+                .vals = tensor.vals,
+                .offset = tensor.offset + coord * tensor.incr.vec[i],
+                .size = tensor.size.cut(d),
+                .incr = tensor.incr.cut(d),
             };
         }
 
-        /// lazily take the diagonal of dimensions i and j
-        /// the result is a tensor without dimension j
-        pub fn diag(a: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dims.sub(Dims.from(&.{j}))) {
+        /// Lazily take the diagonal of dimensions `i` and `j`.
+        /// - The result is a tensor without dimension `j`.
+        pub fn diag(tensor: Tensor, comptime i: usize, comptime j: usize) DenseType(Element, dims.sub(Dims.from(&.{j}))) {
             assert(i != j);
             assert(dims.index(i) != null);
-            if (dims.index(j) == null) return a;
-            if (dims.index(i).? < dims.index(j).?) return a.diag(j, i).t(i, j);
-            var size = a.size.cut(j);
-            size.set(i, @min(a.size.at(i), a.size.at(j)));
-            var incr = a.incr.cut(j);
-            incr.set(i, a.incr.at(i) + a.incr.at(j));
+            if (dims.index(j) == null) return tensor;
+            if (dims.index(i).? < dims.index(j).?) return tensor.diag(j, i).t(i, j);
+            var size = tensor.size.cut(j);
+            size.set(i, @min(tensor.size.at(i), tensor.size.at(j)));
+            var incr = tensor.incr.cut(j);
+            incr.set(i, tensor.incr.at(i) + tensor.incr.at(j));
             return .{
-                .vals = a.vals,
-                .offset = a.offset,
+                .vals = tensor.vals,
+                .offset = tensor.offset,
                 .size = size,
                 .incr = incr,
             };
         }
 
-        /// res <- red(ew(anyargs))
-        pub fn f(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype) args.Type(@TypeOf(anyargs)).ErrorWrap(ew, void) {
-            const Args = args.Type(@TypeOf(anyargs));
-            return res.fInternal(red, ew, anyargs, dims.unite(Args.dims));
+        /// Sets `res` to the result of the tensor operation:
+        /// - `args` is an anonymous struct with the arguments of the operation.
+        /// - `ew` is a function which is applied *elementwise*. It takes `args`, with each tensor swapped out for one of its elements,
+        ///   as input and returns `Element` or `!Element`.
+        /// - `red` is a function used to *reduce* the results of `ew` to fit the `res.dims`. It takes two `Element`s as input and returns one `Element`.
+        pub fn f(res: Tensor, comptime red: Reduction, comptime ew: anytype, args: anytype) Arg(@TypeOf(args)).ErrorWrap(ew, void) {
+            const A = Arg(@TypeOf(args));
+            return res.fInternal(red, ew, args, dims.unite(A.dims));
         }
 
-        /// res <- red(ew(anyargs))
+        /// res <- red(ew(args))
         /// with iteration order given by `dims_order`
-        fn fInternal(res: Tensor, comptime red: anytype, comptime ew: anytype, anyargs: anytype, comptime dims_order: Dims) args.Type(@TypeOf(anyargs)).ErrorWrap(ew, void) {
-            const Args = args.Type(@TypeOf(anyargs));
-            const dims_total = dims.unite(Args.dims);
+        fn fInternal(res: Tensor, comptime red: Reduction, comptime ew: anytype, args: anytype, comptime dims_order: Dims) Arg(@TypeOf(args)).ErrorWrap(ew, void) {
+            const A = Arg(@TypeOf(args));
+            const dims_total = dims.unite(A.dims);
             assert(dims_total.equal(dims_order)); //dims_order must match dimensions of the tensor operation
-            const dims_fill = dims_order.sub(Args.dims);
+            const dims_fill = dims_order.sub(A.dims);
             const dims_red = dims_order.sub(dims);
             const dims_calc = dims_order.sub(dims_fill).sub(dims_red);
-            assert(res.allValidInplace(anyargs, dims_calc)); //inplace operation not valid
-            const bounds = res.collectBounds(anyargs);
-            var a = Args.init(anyargs);
-            var coord_iter: coords.Type(dims_total) = undefined;
+            assert(res.allValidInplace(args, dims_calc)); //inplace operation not valid
+            const bounds = res.collectBounds(args);
+            var a = A.init(args);
+            var coord_iter: Coords(dims_total) = undefined;
             coord_iter.reset(dims_calc);
             while (true) {
                 coord_iter.reset(dims_red);
-                a.set(anyargs, &coord_iter.arr);
+                a.set(args, &coord_iter.arr);
                 const res_red_err = a.call(ew);
                 var res_red: Element = if (util.ErrorSet(@TypeOf(res_red_err))) |_| try res_red_err else res_red_err;
                 while (dims_red.len > 0 and coord_iter.next(bounds, dims_red)) {
-                    a.set(anyargs, &coord_iter.arr);
+                    a.set(args, &coord_iter.arr);
                     const res_ew_err = a.call(ew);
                     const res_ew: Element = if (util.ErrorSet(@TypeOf(res_ew_err))) |_| try res_ew_err else res_ew_err;
                     res_red = red(res_red, res_ew);
@@ -195,41 +229,38 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
             }
         }
 
-        /// union of all dimensions of `@This()` and `AnyArgs`
-        inline fn collectDims(AnyArgs: type) Dims {
+        /// union of all dimensions of `@This()` and `Args`
+        inline fn CoordsType(Args: type) type {
             comptime {
-                return dims.unite(args.Type(AnyArgs).dims);
+                return Coords(dims.unite(Arg(Args).dims));
             }
         }
 
-        /// total size of tensor `res` and arguments `anyargs`
-        /// asserts matching sizes
-        fn collectBounds(res: Tensor, anyargs: anytype) coords.Type(collectDims(@TypeOf(anyargs))) {
-            var bounds = coords.Type(collectDims(@TypeOf(anyargs))).zero;
+        /// total bounds of tensor `res` and arguments `args`
+        /// asserts matching bounds
+        fn collectBounds(res: Tensor, args: anytype) CoordsType(@TypeOf(args)) {
+            var bounds = CoordsType(@TypeOf(args)).zero;
             bounds.collectBounds(res);
-            bounds.collectBoundsMany(anyargs);
+            bounds.collectBoundsMany(args);
             return bounds;
         }
 
-        fn allValidInplace(res: Tensor, anyargs: anytype, comptime dims_calc: Dims) bool {
-            if (Tensor.dims.len == 0) return true;
-            const AnyArgs = @TypeOf(anyargs);
-            inline for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
-                if (!res.validInplace(@field(anyargs, field_anyargs.name), dims_calc)) return false;
+        fn allValidInplace(res: Tensor, args: anytype, comptime dims_calc: Dims) bool {
+            if (dims_calc.len == 0) return true;
+            inline for (@typeInfo(@TypeOf(args)).Struct.fields) |field_args| {
+                if (!res.validInplace(@field(args, field_args.name), dims_calc)) return false;
             }
             return true;
         }
 
-        /// TODO: improve
-        /// as of now it is incorrect when manipulating the underlying MultiSlices
         fn validInplace(res: Tensor, arg: anytype, comptime dims_calc: Dims) bool {
-            const Arg = @TypeOf(arg);
+            const A = @TypeOf(arg);
             // quick checks
-            if (!is(Arg)) return true;
+            if (!is(A)) return true;
             if (!std.meta.eql(res.vals, arg.vals)) return true;
-            if (Arg == Tensor and std.meta.eql(res, arg)) return true;
+            if (A == Tensor and std.meta.eql(res, arg)) return true;
             // actual check
-            const heuristic_res = res.size.mul() * Arg.dims.len;
+            const heuristic_res = res.size.mul() * A.dims.len;
             const heuristic_arg = arg.size.mul() * dims.len;
             return if (heuristic_res <= heuristic_arg)
                 res.checkValidInplace(arg, dims_calc)
@@ -238,6 +269,8 @@ fn DenseType(_Element: type, comptime _dims: Dims) type {
         }
 
         fn checkValidInplace(res: Tensor, arg: anytype, comptime dims_calc: Dims) bool {
+            if (!is(@TypeOf(arg))) @compileError("`arg` must be tensor");
+            assert(std.meta.eql(res.vals, arg.vals)); // pointers must match
             var pos_res = Position.zero;
             while (true) {
                 const index = res.indFrom(pos_res);

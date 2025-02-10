@@ -84,3 +84,7 @@ test {
     const a: @Vector(4, usize) = .{ 2, 3, 4, 5 };
     try expect(@reduce(.And, @divFloor(a, a) != a));
 }
+
+test {
+    _ = @max(@as(u32, 10), @as(i32, 10));
+}

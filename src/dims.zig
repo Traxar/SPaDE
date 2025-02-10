@@ -64,7 +64,7 @@ pub const Type = struct {
     }
 
     /// comptime-only union of 2 sets
-    /// order of a is prefered
+    /// - order of `a` is prefered
     pub inline fn unite(a: Dims, b: Dims) Dims {
         comptime {
             return from(a.slice() ++ b.sub(a).slice());

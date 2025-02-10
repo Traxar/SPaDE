@@ -24,17 +24,18 @@ pub fn Type(comptime dims: Dims) type {
         }
 
         /// value at dimension `d`, 0 if `d` does not exist
-        pub fn at(pos: Position, comptime d: usize) usize {
-            return if (dims.index(d)) |i| pos.vec[i] else 0;
+        pub fn at(a: Position, comptime d: usize) usize {
+            return if (dims.index(d)) |i| a.vec[i] else 0;
         }
 
         /// set value at dimension
-        pub fn set(pos: *Position, comptime d: usize, new: usize) void {
-            pos.vec[dims.index(d).?] = new;
+        pub fn set(a: *Position, comptime d: usize, new: usize) void {
+            a.vec[dims.index(d).?] = new;
         }
 
-        /// increment
-        pub fn inc(size: Position) Position {
+        /// increment from size
+        pub fn incFrom(size: Position) Position {
+            assert(zero.lt(size));
             var res: Position = undefined;
             if (dims.len == 0) return res;
             res.vec[0] = 1;
@@ -45,15 +46,28 @@ pub fn Type(comptime dims: Dims) type {
         }
 
         /// index from position and increment
-        pub fn indFrom(incr: Position, pos: Position) usize {
+        pub fn indFrom(incr: Position, position: Position) usize {
             if (dims.len == 0) return 0;
-            return @reduce(.Add, incr.vec * pos.vec);
+            return @reduce(.Add, incr.vec * position.vec);
         }
 
-        pub fn posFrom(incr: Position, ind: usize) ?Position {
+        fn increasing(incr: Position) bool {
+            switch (dims.len) {
+                0, 1 => return true,
+                else => {
+                    const lower = incr.cut(dims.ptr[dims.len - 1]).vec;
+                    const upper = incr.cut(dims.ptr[0]).vec;
+                    return @reduce(.And, lower <= upper);
+                },
+            }
+        }
+
+        /// position from index and increment
+        pub fn posFrom(incr: Position, index: usize) ?Position {
+            assert(incr.increasing());
             var pos = Position{ .vec = undefined };
             if (dims.len == 0) return pos;
-            var i = ind;
+            var i = index;
             var j: usize = dims.len;
             while (j > 0) {
                 j -= 1;
@@ -65,9 +79,9 @@ pub fn Type(comptime dims: Dims) type {
         }
 
         /// all less than
-        pub fn lt(pos: Position, size: Position) bool {
+        pub fn lt(a: Position, b: Position) bool {
             if (dims.len == 0) return true;
-            return @reduce(.And, pos.vec < size.vec);
+            return @reduce(.And, a.vec < b.vec);
         }
 
         /// all equal
@@ -112,7 +126,7 @@ pub fn Type(comptime dims: Dims) type {
 test "position from index" {
     const Pos = Type(Dims.from(&.{ 0, 1, 2 }));
     const size = Pos.from(&.{ 2, 3, 4 });
-    const incr = size.inc();
+    const incr = size.incFrom();
     try expect(incr.eq(Pos.from(&.{ 1, 2, 6 })));
     const pos = Pos.from(&.{ 1, 1, 2 });
     const ind = incr.indFrom(pos);
