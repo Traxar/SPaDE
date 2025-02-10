@@ -12,7 +12,7 @@ a library for **SP**arse **a**nd **DE**nse tensor operations.
 
 in your zig-project run:
 
-    zig fetch --save https://github.com/Traxar/SPaDE/archive/refs/tags/v0.0.1.tar.gz
+    zig fetch --save https://github.com/Traxar/SPaDE/archive/refs/tags/v0.0.2.tar.gz
 
 Then add `spade` as an import to your root modules in `build.zig`:
 
