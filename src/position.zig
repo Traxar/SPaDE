@@ -34,7 +34,7 @@ pub fn Type(comptime dims: Dims) type {
         }
 
         /// increment from size
-        pub fn incFrom(size: Position) Position {
+        pub fn increment(size: Position) Position {
             assert(zero.lt(size));
             var res: Position = undefined;
             if (dims.len == 0) return res;
@@ -45,10 +45,10 @@ pub fn Type(comptime dims: Dims) type {
             return res;
         }
 
-        /// index from position and increment
-        pub fn indFrom(incr: Position, position: Position) usize {
+        /// index from increment and position
+        pub fn index(incr: Position, pos: Position) usize {
             if (dims.len == 0) return 0;
-            return @reduce(.Add, incr.vec * position.vec);
+            return @reduce(.Add, incr.vec * pos.vec);
         }
 
         fn increasing(incr: Position) bool {
@@ -62,12 +62,12 @@ pub fn Type(comptime dims: Dims) type {
             }
         }
 
-        /// position from index and increment
-        pub fn posFrom(incr: Position, index: usize) ?Position {
+        /// position from increment and index
+        pub fn position(incr: Position, ind: usize) ?Position {
             assert(incr.increasing());
             var pos = Position{ .vec = undefined };
             if (dims.len == 0) return pos;
-            var i = index;
+            var i = ind;
             var j: usize = dims.len;
             while (j > 0) {
                 j -= 1;
@@ -126,11 +126,11 @@ pub fn Type(comptime dims: Dims) type {
 test "position from index" {
     const Pos = Type(Dims.from(&.{ 0, 1, 2 }));
     const size = Pos.from(&.{ 2, 3, 4 });
-    const incr = size.incFrom();
+    const incr = size.increment();
     try expect(incr.eq(Pos.from(&.{ 1, 2, 6 })));
     const pos = Pos.from(&.{ 1, 1, 2 });
-    const ind = incr.indFrom(pos);
+    const ind = incr.index(pos);
     try expect(ind == 15);
-    const pos_ = incr.posFrom(ind).?;
+    const pos_ = incr.position(ind).?;
     try expect(pos.eq(pos_));
 }

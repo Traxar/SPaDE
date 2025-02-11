@@ -33,7 +33,7 @@ pub fn ErrorSet(T: type) ?type {
 }
 
 /// stack allocation
-inline fn _alloc(Element: type, comptime length: usize) []Element {
+inline fn stackAlloc(Element: type, comptime length: usize) []Element {
     var mem: [length]Element = undefined;
     return mem[0..];
 }
@@ -109,19 +109,19 @@ pub fn MultiSlice(comptime Element: type) type {
         }
 
         ///stack allocation
-        pub inline fn _init(comptime n: usize) Slice {
+        pub inline fn stackInit(comptime n: usize) Slice {
             var slice: Slice = undefined;
             slice.len = n;
             slice.ptr = switch (@typeInfo(Element)) {
                 .Struct => |s| _: {
                     var res: MultiPointer(Element) = undefined;
                     inline for (s.fields) |field| {
-                        @field(res, field.name) = MultiSlice(field.type)._init(n).ptr;
+                        @field(res, field.name) = MultiSlice(field.type).stackInit(n).ptr;
                     }
                     break :_ res;
                 },
-                .Vector => |v| _alloc(v.child, n).ptr,
-                else => _alloc(Element, n).ptr,
+                .Vector => |v| stackAlloc(v.child, n).ptr,
+                else => stackAlloc(Element, n).ptr,
             };
             return slice;
         }

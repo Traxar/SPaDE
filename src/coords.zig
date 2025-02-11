@@ -15,11 +15,11 @@ pub fn Type(dims: Dims) type {
         pub fn collectBounds(bounds: *Coords, anyarg: anytype) void {
             const AnyArg = @TypeOf(anyarg);
             if (!tensor.is(AnyArg)) return;
-            inline for (AnyArg.dims.slice(), 0..) |dim, i| {
+            inline for (AnyArg.dims.slice()) |dim| {
                 if (bounds.arr[dim] == 0) {
-                    bounds.arr[dim] = anyarg.size.vec[i];
+                    bounds.arr[dim] = anyarg.size(dim);
                 } else {
-                    assert(bounds.arr[dim] == anyarg.size.vec[i]); //bounds must match
+                    assert(bounds.arr[dim] == anyarg.size(dim)); //bounds must match
                 }
             }
         }
