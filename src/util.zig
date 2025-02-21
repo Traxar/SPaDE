@@ -90,20 +90,24 @@ pub fn MultiSlice(comptime Element: type) type {
             };
         }
 
-        // TODO: #4: fuse into single alloc
-        pub fn init(n: usize, allocator: Allocator) !Slice {
+        pub fn init(n: usize, arena: Allocator) !Slice {
             var slice: Slice = undefined;
             slice.len = n;
             slice.ptr = switch (@typeInfo(Element)) {
                 .Struct => |s| _: {
                     var res: MultiPointer(Element) = undefined;
-                    inline for (s.fields) |field| {
-                        @field(res, field.name) = (try MultiSlice(field.type).init(n, allocator)).ptr;
+                    inline for (s.fields, 0..) |field, i| {
+                        @field(res, field.name) = (MultiSlice(field.type).init(n, arena) catch |err| {
+                            inline for (0..i) |j| {
+                                (Slice{ .len = n, .ptr = res }).sub(s.fields[j]).deinit(arena);
+                            }
+                            return err;
+                        }).ptr;
                     }
                     break :_ res;
                 },
-                .Vector => |v| (try allocator.alloc(v.child, n)).ptr,
-                else => (try allocator.alloc(Element, n)).ptr,
+                .Vector => |v| (try arena.alloc(v.child, n)).ptr,
+                else => (try arena.alloc(Element, n)).ptr,
             };
             return slice;
         }
