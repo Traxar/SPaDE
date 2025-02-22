@@ -115,6 +115,22 @@ pub const Type = struct {
     }
 
     /// comptime-only
+    /// true if a contains dim b
+    pub inline fn has(a: Dims, b: usize) bool {
+        comptime {
+            return a.index(b) != null;
+        }
+    }
+
+    test "has" {
+        const a = from(&.{ 0, 1 });
+        try expect(a.has(0));
+        try expect(a.has(1));
+        try expect(!a.has(2));
+        try expect(!a.has(3));
+    }
+
+    /// comptime-only
     /// true if a > b
     pub inline fn contains(a: Dims, b: Dims) bool {
         comptime {
