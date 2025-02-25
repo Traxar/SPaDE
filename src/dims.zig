@@ -8,9 +8,11 @@ pub const Type = struct {
     len: usize,
 
     pub inline fn from(dims: []const usize) Dims {
-        const res = Dims{ .ptr = dims.ptr, .len = dims.len };
-        if (!res.isSet()) @compileError("dimensions must be unique");
-        return res;
+        comptime {
+            const res = Dims{ .ptr = dims.ptr, .len = dims.len };
+            if (!res.isSet()) @compileError("dimensions must be unique");
+            return res;
+        }
     }
 
     /// comptime-only check if each element is unique
