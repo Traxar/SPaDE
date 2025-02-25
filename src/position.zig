@@ -24,7 +24,7 @@ pub fn Type(comptime dims: Dims) type {
         }
 
         /// value at dimension `d`, 0 if `d` does not exist
-        pub fn at(a: Position, comptime d: usize) usize {
+        pub inline fn at(a: Position, comptime d: usize) usize {
             return if (dims.index(d)) |i| a.vec[i] else 0;
         }
 

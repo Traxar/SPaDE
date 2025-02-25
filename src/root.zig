@@ -1,7 +1,7 @@
-pub const tensor = @import("tensor.zig");
+pub const Tensor = @import("tensor.zig").Type;
 pub const op = @import("op.zig");
 
 test {
-    _ = tensor;
+    _ = Tensor;
     _ = op;
 }

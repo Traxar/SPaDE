@@ -51,6 +51,11 @@ pub fn Type(comptime _dims: Dims) type {
             return pos_;
         }
 
+        /// number of entries
+        pub fn n(layout: Layout) usize {
+            return layout.size.mul();
+        }
+
         /// Lazily swap dimensions `i` and `j`.
         /// - this has no cost
         pub fn t(layout: Layout, comptime i: usize, comptime j: usize) Type(dims.swap(i, j)) {
@@ -99,8 +104,8 @@ pub fn Type(comptime _dims: Dims) type {
             assert(dims_calc.len != 0);
             const L = @TypeOf(other);
             if (!is(L)) @compileError("`other` must be a Layout");
-            const heuristic_layout = layout.size.mul() * L.dims.len;
-            const heuristic_other = other.size.mul() * dims.len;
+            const heuristic_layout = layout.n() * L.dims.len;
+            const heuristic_other = other.n() * dims.len;
             return if (heuristic_layout <= heuristic_other)
                 layout.checkValidInplace(other, dims_calc)
             else
