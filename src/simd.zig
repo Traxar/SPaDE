@@ -4,7 +4,11 @@ const assert = std.debug.assert;
 
 /// recurrsive vector struct
 pub fn Vector(len: comptime_int, Element: type) type {
-    return switch (@typeInfo(Element)) {
+    assert(len > 0);
+    const info = @typeInfo(Element);
+    if (info == .Vector) assert(len == 1);
+    if (len == 1) return Element;
+    return switch (info) {
         .Struct => |s| _: {
             var res_fields: [s.fields.len]std.builtin.Type.StructField = undefined;
             for (s.fields, &res_fields) |field, *res_field| {
@@ -25,8 +29,7 @@ pub fn Vector(len: comptime_int, Element: type) type {
                 },
             });
         },
-        .Vector => |v| if (len == 1) v.child else @Vector(len, v.child),
-        else => if (len == 1) Element else @Vector(len, Element),
+        else => @Vector(len, Element),
     };
 }
 
@@ -38,39 +41,60 @@ test "Vector" {
     try expect(@TypeOf(c.b) == @Vector(3, u13));
     try expect(@TypeOf(c.c) == @Vector(3, f32));
 
-    //try expect(A == Vector(1, C)); //watch out, this fails!
-    try expect(Vector(1, A) == Vector(1, C));
+    try expect(Vector(1, A) == A);
+    try expect(Vector(1, C) == C);
+    try expect(Vector(1, C) != A);
 }
 
-/// retrieve the simd length of a recurrsive vector struct
-pub fn length(Element: type) comptime_int {
+fn minVectorLength(Element: type) ?comptime_int {
     return switch (@typeInfo(Element)) {
         .Struct => |s| _: {
             var res: ?comptime_int = null;
             for (s.fields) |field| {
-                const now = length(field.type);
-                res = if (res) |sofar| sofar else now;
-                if (res != now) @compileError("simd sizes do not match");
+                if (minVectorLength(field.type)) |now|
+                    res = if (res) |sofar| @min(sofar, now) else now;
             }
-            break :_ res.?;
+            break :_ res;
         },
         .Vector => |v| v.len,
-        else => 1,
+        else => null,
     };
+}
+
+test "minVectorLength" {
+    const A = struct { a: bool, b: u13, c: f32 };
+    try expect(minVectorLength(A) == null);
+    const B = struct { a: bool, b: @Vector(3, u13), c: f32 };
+    try expect(minVectorLength(B) == 3);
+    const C = Vector(3, A);
+    try expect(minVectorLength(C) == 3);
+}
+
+/// returns `len` if MaybeVector is a result of `Vector(len , Element)` and null otherwise.
+pub fn length(Element: type, MaybeVector: type) ?comptime_int {
+    if (minVectorLength(Element)) |_| {
+        return if (Element == MaybeVector) 1 else null;
+    } else {
+        const len = minVectorLength(MaybeVector) orelse 1;
+        if (Vector(len, Element) == MaybeVector) return len;
+        return null;
+    }
 }
 
 test "length" {
     const A = struct { a: bool, b: u13, c: f32 };
-    const B = Vector(1, A);
+    const B = struct { a: bool, b: @Vector(3, u13), c: f32 };
     const C = Vector(3, A);
-    try expect(length(A) == 1);
-    try expect(length(B) == 1);
-    try expect(length(C) == 3);
+    try expect(length(A, A) == 1);
+    try expect(length(A, B) == null);
+    try expect(length(A, C) == 3);
+    try expect(length(B, B) == 1);
+    try expect(length(C, C) == 1);
 }
 
 /// splat element into a recurrsive vector struct
 pub fn splat(len: comptime_int, element: anytype) Vector(len, @TypeOf(element)) {
-    assert(length(@TypeOf(element)) == 1);
+    if (len == 1) return element;
     return switch (@typeInfo(@TypeOf(element))) {
         .Struct => |s| _: {
             var res: Vector(len, @TypeOf(element)) = undefined;
@@ -79,7 +103,6 @@ pub fn splat(len: comptime_int, element: anytype) Vector(len, @TypeOf(element)) 
             }
             break :_ res;
         },
-        .Vector => @splat(@bitCast(element)),
         else => @splat(element),
     };
 }
@@ -105,19 +128,19 @@ test "splat" {
 
 /// suggest simd length of a recurrsive vector struct
 /// based on std heuristics
-pub fn suggestLength(Element: type) comptime_int {
+pub fn suggestLength(Element: type) ?comptime_int {
     return switch (@typeInfo(Element)) {
         .Struct => |s| _: {
             var res: ?comptime_int = null;
             for (s.fields) |field| {
-                const now = suggestLength(field.type);
-                res = if (res) |sofar| @min(sofar, now) else now;
+                if (suggestLength(field.type)) |now|
+                    res = if (res) |sofar| @min(sofar, now) else now;
             }
             break :_ res;
         },
-        .Vector => |v| std.simd.suggestVectorLength(v.child),
+        .Vector => 1,
         else => std.simd.suggestVectorLength(Element),
-    } orelse 1;
+    };
 }
 
 test "suggestLength" {
@@ -126,5 +149,5 @@ test "suggestLength" {
 }
 
 pub fn As(V: type, Element: type) type {
-    return Vector(length(V), Element);
+    return Vector(length(V).?, Element);
 }
