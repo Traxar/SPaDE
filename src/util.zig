@@ -38,8 +38,13 @@ inline fn stackAlloc(Element: type, comptime length: usize) []Element {
     return mem[0..];
 }
 
+inline fn nextDepth(comptime recurrsion_depth: ?usize) ?usize {
+    comptime return if (recurrsion_depth) |r| r - 1 else null;
+}
+
 /// recurrsive MultiPointer without functions
-fn MultiPointer(Element: type) type {
+fn MultiPointer(Element: type, comptime recurrsion_depth: ?usize) type {
+    if (recurrsion_depth == 0) return [*]Element;
     const info_E = @typeInfo(Element);
     return switch (info_E) {
         .Struct => |s| _: {
@@ -50,7 +55,7 @@ fn MultiPointer(Element: type) type {
                     .default_value = null,
                     .is_comptime = field_E.is_comptime,
                     .name = field_E.name,
-                    .type = MultiPointer(field_E.type),
+                    .type = MultiPointer(field_E.type, nextDepth(recurrsion_depth)),
                 };
             }
             break :_ @Type(std.builtin.Type{ .Struct = .{
@@ -60,31 +65,38 @@ fn MultiPointer(Element: type) type {
                 .is_tuple = false,
             } });
         },
-        .Vector => |v| [*]v.child,
         else => [*]Element,
     };
 }
 
 test {
     const A = struct { a: bool, b: u13, c: f32 };
-    const C = MultiPointer(A);
-    const c: C = undefined;
-    try expect(@TypeOf(c.a) == [*]bool);
-    try expect(@TypeOf(c.b) == [*]u13);
-    try expect(@TypeOf(c.c) == [*]f32);
+    const As = MultiPointer(A, null);
+    const a: As = undefined;
+    try expect(@TypeOf(a.a) == [*]bool);
+    try expect(@TypeOf(a.b) == [*]u13);
+    try expect(@TypeOf(a.c) == [*]f32);
+}
+
+test {
+    const A = struct { a: @Vector(3, bool), b: @Vector(3, u13), c: @Vector(3, f32) };
+    const As = MultiPointer(A, null);
+    const a: As = undefined;
+    try expect(@TypeOf(a.a) == [*]@Vector(3, bool));
+    try expect(@TypeOf(a.b) == [*]@Vector(3, u13));
+    try expect(@TypeOf(a.c) == [*]@Vector(3, f32));
 }
 
 /// recurrsive MultiPointer + length
-pub fn MultiSlice(comptime Element: type) type {
+pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) type {
     return packed struct {
         const Slice = @This();
-        ptr: MultiPointer(Element),
+        const Pointer = MultiPointer(Element, recurrsion_depth);
+        ptr: Pointer,
         len: usize,
 
-        const simd_size = simd.length(Element);
-
-        fn sub(slice: Slice, field: std.builtin.Type.StructField) MultiSlice(field.type) {
-            return MultiSlice(field.type){
+        fn sub(slice: Slice, field: std.builtin.Type.StructField) MultiSlice(field.type, nextDepth(recurrsion_depth)) {
+            return MultiSlice(field.type, nextDepth(recurrsion_depth)){
                 .ptr = @field(slice.ptr, field.name),
                 .len = slice.len,
             };
@@ -93,21 +105,22 @@ pub fn MultiSlice(comptime Element: type) type {
         pub fn init(n: usize, arena: Allocator) !Slice {
             var slice: Slice = undefined;
             slice.len = n;
-            slice.ptr = switch (@typeInfo(Element)) {
-                .Struct => |s| _: {
-                    var res: MultiPointer(Element) = undefined;
+            slice.ptr = switch (@typeInfo(Pointer)) {
+                .Struct => _: {
+                    const s = @typeInfo(Element).Struct;
+                    var ptr: Pointer = undefined;
                     inline for (s.fields, 0..) |field, i| {
-                        @field(res, field.name) = (MultiSlice(field.type).init(n, arena) catch |err| {
+                        @field(ptr, field.name) = (MultiSlice(field.type, nextDepth(recurrsion_depth)).init(n, arena) catch |err| {
                             inline for (0..i) |j| {
-                                (Slice{ .len = n, .ptr = res }).sub(s.fields[j]).deinit(arena);
+                                (Slice{ .len = n, .ptr = ptr }).sub(s.fields[j]).deinit(arena);
                             }
                             return err;
                         }).ptr;
                     }
-                    break :_ res;
+                    break :_ ptr;
                 },
-                .Vector => |v| (try arena.alloc(v.child, n)).ptr,
-                else => (try arena.alloc(Element, n)).ptr,
+                .Pointer => |p| (try arena.alloc(p.child, n)).ptr,
+                else => unreachable,
             };
             return slice;
         }
@@ -116,33 +129,36 @@ pub fn MultiSlice(comptime Element: type) type {
         pub inline fn stackInit(comptime n: usize) Slice {
             var slice: Slice = undefined;
             slice.len = n;
-            slice.ptr = switch (@typeInfo(Element)) {
-                .Struct => |s| _: {
-                    var res: MultiPointer(Element) = undefined;
+            slice.ptr = switch (@typeInfo(Pointer)) {
+                .Struct => _: {
+                    const s = @typeInfo(Element).Struct;
+                    var ptr: Pointer = undefined;
                     inline for (s.fields) |field| {
-                        @field(res, field.name) = MultiSlice(field.type).stackInit(n).ptr;
+                        @field(ptr, field.name) = MultiSlice(field.type, nextDepth(recurrsion_depth)).stackInit(n).ptr;
                     }
-                    break :_ res;
+                    break :_ ptr;
                 },
-                .Vector => |v| stackAlloc(v.child, n).ptr,
-                else => stackAlloc(Element, n).ptr,
+                .Pointer => |p| stackAlloc(p.child, n).ptr,
+                else => unreachable,
             };
             return slice;
         }
 
         pub fn deinit(slice: Slice, allocator: Allocator) void {
-            switch (@typeInfo(Element)) {
-                .Struct => |s| {
+            switch (@typeInfo(Pointer)) {
+                .Struct => {
+                    const s = @typeInfo(Element).Struct;
                     inline for (s.fields) |field| {
                         slice.sub(field).deinit(allocator);
                     }
                 },
-                else => allocator.free(slice.ptr[0..slice.len]),
+                .Pointer => allocator.free(slice.ptr[0..slice.len]),
+                else => unreachable,
             }
         }
 
-        // ensures capacity but invalidates any content
-        pub fn ensureCapacity(slice: *Slice, n: usize, allocator: Allocator) !void {
+        // ensures `.len >= n` but invalidates any content
+        pub fn reinit(slice: *Slice, n: usize, allocator: Allocator) !void {
             if (n <= slice.len) return;
             const h = try Slice.init(n, allocator);
             slice.deinit(allocator);
@@ -150,42 +166,68 @@ pub fn MultiSlice(comptime Element: type) type {
         }
 
         pub fn set(slice: Slice, i: usize, element: Element) void {
-            assert(i + simd_size <= slice.len);
-            switch (@typeInfo(Element)) {
-                .Struct => |s| {
+            slice.setN(1, i, element);
+        }
+
+        pub fn setN(slice: Slice, simd_len: comptime_int, i: usize, simd_element: simd.Vector(simd_len, Element)) void {
+            if (simd_len > 1) assert(recurrsion_depth == null); // only supported for full SOA
+            assert(i + simd_len <= slice.len);
+            switch (@typeInfo(Pointer)) {
+                .Struct => {
+                    const s = @typeInfo(Element).Struct;
                     inline for (s.fields) |field| {
-                        slice.sub(field).set(i, @field(element, field.name));
+                        slice.sub(field).setN(simd_len, i, @field(simd_element, field.name));
                     }
                 },
-                .Vector => slice.ptr[i..][0..simd_size].* = element,
-                else => slice.ptr[i] = element,
+                .Pointer => {
+                    if (simd_len > 1) {
+                        slice.ptr[i..][0..simd_len].* = simd_element;
+                    } else {
+                        slice.ptr[i] = simd_element;
+                    }
+                },
+                else => unreachable,
             }
         }
 
         pub fn at(slice: Slice, i: usize) Element {
-            assert(i + simd_size <= slice.len);
-            return switch (@typeInfo(Element)) {
-                .Struct => |s| _: {
+            return slice.atN(1, i);
+        }
+
+        pub fn atN(slice: Slice, simd_len: comptime_int, i: usize) Element {
+            if (simd_len > 1) assert(recurrsion_depth == null); // only supported for full SOA
+            assert(i + simd_len <= slice.len);
+            return switch (@typeInfo(Pointer)) {
+                .Struct => _: {
+                    const s = @typeInfo(Element).Struct;
                     var element: Element = undefined;
                     inline for (s.fields) |field| {
                         @field(element, field.name) = slice.sub(field).at(i);
                     }
                     break :_ element;
                 },
-                .Vector => slice.ptr[i..][0..simd_size].*,
-                else => slice.ptr[i],
+                .Pointer => _: {
+                    if (simd_len > 1) {
+                        break :_ slice.ptr[i..][0..simd_len].*;
+                    } else {
+                        break :_ slice.ptr[i];
+                    }
+                },
+                else => unreachable,
             };
         }
 
         pub fn fill(slice: Slice, from: usize, to: usize, element: Element) void {
             assert(simd.length(Element) == 1);
-            switch (@typeInfo(Element)) {
-                .Struct => |s| {
+            switch (@typeInfo(Pointer)) {
+                .Struct => {
+                    const s = @typeInfo(Element).Struct;
                     inline for (s.fields) |field| {
                         slice.sub(field).fill(from, to, @field(element, field.name));
                     }
                 },
-                else => @memset(slice.ptr[from..to], @bitCast(element)),
+                .Pointer => @memset(slice.ptr[from..to], element),
+                else => unreachable,
             }
         }
     };
@@ -195,17 +237,16 @@ test "MultiSlice" {
     const ally = testing.allocator;
     const A = struct { a: bool, b: u13, c: f32 };
     const C = simd.Vector(3, A);
-    const SA = MultiSlice(A);
-    const SC = MultiSlice(C);
+    const SA = MultiSlice(A, null);
 
     //init/deinit
-    const sc = try SC.init(5, ally);
-    defer sc.deinit(ally);
-    try expect(@TypeOf(sc.ptr.a) == [*]bool);
-    try expect(@TypeOf(sc.ptr.b) == [*]u13);
-    try expect(@TypeOf(sc.ptr.c) == [*]f32);
-    try expect(sc.len == 5);
-    try expect(SC.simd_size == 3);
+    const sa = try SA.init(5, ally);
+    defer sa.deinit(ally);
+    try expect(@TypeOf(sa.ptr.a) == [*]bool);
+    try expect(@TypeOf(sa.ptr.b) == [*]u13);
+    try expect(@TypeOf(sa.ptr.c) == [*]f32);
+    try expect(sa.len == 5);
+    //try expect(SC.simd_size == 3);
 
     //at/set
     const c = C{
@@ -213,9 +254,8 @@ test "MultiSlice" {
         .b = .{ 3, 4, 5 },
         .c = .{ -0.5, 7.25, -3.75 },
     };
-    sc.set(0, c);
-    sc.set(2, c);
-    const sa: SA = @bitCast(sc);
+    sa.setN(3, 0, c);
+    sa.setN(3, 2, c);
     try expect(sa.at(0).a == true);
     try expect(sa.at(1).a == false);
     try expect(sa.at(2).a == true);
