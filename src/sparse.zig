@@ -12,7 +12,7 @@ const simd = @import("simd.zig");
 /// Returns `true` if `T` is a sparse tensor.
 pub inline fn is(T: type) bool {
     comptime {
-        if (@typeInfo(T) != .Struct) return false;
+        if (@typeInfo(T) != .@"struct") return false;
         if (!@hasDecl(T, "Element") or @TypeOf(T.Element) != type) return false;
         if (!@hasDecl(T, "dims_sparse") or @TypeOf(T.dims_sparse) != Dims) return false;
         if (!@hasDecl(T, "dims_dense") or @TypeOf(T.dims_dense) != Dims) return false;
@@ -30,7 +30,7 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
         pub const zero = zero_;
 
         const Entry = struct { ind: usize, val: Element };
-        const DataDense = util.MultiSlice(usize, 1);
+        const DataDense = util.MultiSlice(usize, null);
         const DataSparse = util.MultiSlice(Entry, 1);
 
         start: usize,
@@ -87,6 +87,43 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
         pub fn size(tensor: Sparse, comptime d: usize) usize {
             return tensor.layout_sparse.size.at(d) + tensor.layout_dense.size.at(d);
         }
+
+        // fn search(tensor: Sparse, coords: []const usize) struct { ind: usize, ex: bool } {
+        //     const index_dense = tensor.layout_dense.index(coords);
+        //     if (index_dense < tensor.start) return .{.ind = tensor.inds_dense.at(index_dense), .ex = false};// ???
+        //     if (tensor.stop <= index_dense) return .{.ind = tensor.inds_dense.at(index_dense+1), .ex = false};
+
+        //     var min = tensor.inds_dense.at(index_dense);
+        //     var max = tensor.inds_dense.at(index_dense + 1);
+        //     if (min == return
+        //     //use sparse size to maybe reduce search
+
+        //     //binary search
+
+        // }
+
+        // /// return index of row, col in matrix
+        // /// performs binary search
+        // /// O(log(m)), O(1) if dense
+        // fn indAt(a: Matrix, row: Index, col: Index) I {
+        //     const r = a.val.items(.col)[a.rptr[row]..a.rptr[row + 1]];
+        //     if (r.len == 0) {
+        //         return .{ .ind = a.rptr[row], .ex = false };
+        //     } else {
+        //         var min: Index = @intCast(r.len -| (a.cols - col));
+        //         var max: Index = @intCast(@min(r.len - 1, col));
+        //         while (min < max) {
+        //             const pivot = @divFloor(min + max, 2);
+        //             if (col <= r[pivot]) {
+        //                 max = pivot;
+        //             } else {
+        //                 min = pivot + 1;
+        //             }
+        //         }
+        //         return .{ .ind = a.rptr[row] + min, .ex = col == r[min] };
+        //     }
+        // }
+
     };
 }
 

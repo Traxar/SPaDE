@@ -109,4 +109,4 @@ you can find this demo project [here](https://github.com/Traxar/SPaDE-demo)
 
 ## Dependencies
 
-- `zig 0.13.0`
+- `zig 0.14.0`

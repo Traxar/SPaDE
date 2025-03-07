@@ -6,22 +6,22 @@ const assert = std.debug.assert;
 pub fn Vector(len: comptime_int, Element: type) type {
     assert(len > 0);
     const info = @typeInfo(Element);
-    if (info == .Vector) assert(len == 1);
+    if (info == .vector) assert(len == 1);
     if (len == 1) return Element;
     return switch (info) {
-        .Struct => |s| _: {
+        .@"struct" => |s| _: {
             var res_fields: [s.fields.len]std.builtin.Type.StructField = undefined;
             for (s.fields, &res_fields) |field, *res_field| {
                 res_field.* = .{
                     .alignment = 0,
-                    .default_value = null,
+                    .default_value_ptr = null,
                     .is_comptime = field.is_comptime,
                     .name = field.name,
                     .type = Vector(len, field.type),
                 };
             }
             break :_ @Type(std.builtin.Type{
-                .Struct = .{
+                .@"struct" = .{
                     .layout = s.layout,
                     .fields = &res_fields,
                     .decls = &[_]std.builtin.Type.Declaration{},
@@ -48,7 +48,7 @@ test "Vector" {
 
 fn minVectorLength(Element: type) ?comptime_int {
     return switch (@typeInfo(Element)) {
-        .Struct => |s| _: {
+        .@"struct" => |s| _: {
             var res: ?comptime_int = null;
             for (s.fields) |field| {
                 if (minVectorLength(field.type)) |now|
@@ -56,7 +56,7 @@ fn minVectorLength(Element: type) ?comptime_int {
             }
             break :_ res;
         },
-        .Vector => |v| v.len,
+        .vector => |v| v.len,
         else => null,
     };
 }
@@ -96,7 +96,7 @@ test "length" {
 pub fn splat(len: comptime_int, element: anytype) Vector(len, @TypeOf(element)) {
     if (len == 1) return element;
     return switch (@typeInfo(@TypeOf(element))) {
-        .Struct => |s| _: {
+        .@"struct" => |s| _: {
             var res: Vector(len, @TypeOf(element)) = undefined;
             inline for (s.fields) |field| {
                 @field(res, field.name) = splat(len, @field(element, field.name));
@@ -130,7 +130,7 @@ test "splat" {
 /// based on std heuristics
 pub fn suggestLength(Element: type) ?comptime_int {
     return switch (@typeInfo(Element)) {
-        .Struct => |s| _: {
+        .@"struct" => |s| _: {
             var res: ?comptime_int = null;
             for (s.fields) |field| {
                 if (suggestLength(field.type)) |now|
@@ -138,7 +138,7 @@ pub fn suggestLength(Element: type) ?comptime_int {
             }
             break :_ res;
         },
-        .Vector => 1,
+        .vector => 1,
         else => std.simd.suggestVectorLength(Element),
     };
 }

@@ -7,7 +7,7 @@ const PositionFrom = @import("position.zig").Type;
 /// Returns `true` if `L` is a layout.
 pub inline fn is(L: type) bool {
     comptime {
-        if (@typeInfo(L) != .Struct) return false;
+        if (@typeInfo(L) != .@"struct") return false;
         if (!@hasDecl(L, "dims")) return false;
         if (@TypeOf(L.dims) != Dims) return false;
         return L == Type(L.dims);

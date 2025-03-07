@@ -9,7 +9,7 @@ const simd = @import("simd.zig");
 /// return the non pointer type
 pub fn Deref(A: type) type {
     const info = @typeInfo(A);
-    return if (info == .Pointer) info.Pointer.child else A;
+    return if (info == .pointer) info.pointer.child else A;
 }
 
 test {
@@ -27,7 +27,7 @@ pub fn ReturnType(comptime f: anytype, comptime Args: type) type {
 /// `null` if T contains no error.
 pub fn ErrorSet(T: type) ?type {
     return switch (@typeInfo(T)) {
-        .ErrorUnion => |error_union| error_union.error_set,
+        .error_union => |error_union| error_union.error_set,
         else => null,
     };
 }
@@ -47,18 +47,18 @@ fn MultiPointer(Element: type, comptime recurrsion_depth: ?usize) type {
     if (recurrsion_depth == 0) return [*]Element;
     const info_E = @typeInfo(Element);
     return switch (info_E) {
-        .Struct => |s| _: {
+        .@"struct" => |s| _: {
             var fields_MP: [s.fields.len]std.builtin.Type.StructField = undefined;
             for (&fields_MP, s.fields) |*field_MP, field_E| {
                 field_MP.* = .{
                     .alignment = 0,
-                    .default_value = null,
+                    .default_value_ptr = null,
                     .is_comptime = field_E.is_comptime,
                     .name = field_E.name,
                     .type = MultiPointer(field_E.type, nextDepth(recurrsion_depth)),
                 };
             }
-            break :_ @Type(std.builtin.Type{ .Struct = .{
+            break :_ @Type(std.builtin.Type{ .@"struct" = .{
                 .layout = .@"packed",
                 .fields = &fields_MP,
                 .decls = &[_]std.builtin.Type.Declaration{},
@@ -106,8 +106,8 @@ pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) typ
             var slice: Slice = undefined;
             slice.len = n;
             slice.ptr = switch (@typeInfo(Pointer)) {
-                .Struct => _: {
-                    const s = @typeInfo(Element).Struct;
+                .@"struct" => _: {
+                    const s = @typeInfo(Element).@"struct";
                     var ptr: Pointer = undefined;
                     inline for (s.fields, 0..) |field, i| {
                         @field(ptr, field.name) = (MultiSlice(field.type, nextDepth(recurrsion_depth)).init(n, arena) catch |err| {
@@ -119,7 +119,7 @@ pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) typ
                     }
                     break :_ ptr;
                 },
-                .Pointer => |p| (try arena.alloc(p.child, n)).ptr,
+                .pointer => |p| (try arena.alloc(p.child, n)).ptr,
                 else => unreachable,
             };
             return slice;
@@ -130,15 +130,15 @@ pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) typ
             var slice: Slice = undefined;
             slice.len = n;
             slice.ptr = switch (@typeInfo(Pointer)) {
-                .Struct => _: {
-                    const s = @typeInfo(Element).Struct;
+                .@"struct" => _: {
+                    const s = @typeInfo(Element).@"struct";
                     var ptr: Pointer = undefined;
                     inline for (s.fields) |field| {
                         @field(ptr, field.name) = MultiSlice(field.type, nextDepth(recurrsion_depth)).stackInit(n).ptr;
                     }
                     break :_ ptr;
                 },
-                .Pointer => |p| stackAlloc(p.child, n).ptr,
+                .pointer => |p| stackAlloc(p.child, n).ptr,
                 else => unreachable,
             };
             return slice;
@@ -146,13 +146,13 @@ pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) typ
 
         pub fn deinit(slice: Slice, allocator: Allocator) void {
             switch (@typeInfo(Pointer)) {
-                .Struct => {
-                    const s = @typeInfo(Element).Struct;
+                .@"struct" => {
+                    const s = @typeInfo(Element).@"struct";
                     inline for (s.fields) |field| {
                         slice.sub(field).deinit(allocator);
                     }
                 },
-                .Pointer => allocator.free(slice.ptr[0..slice.len]),
+                .pointer => allocator.free(slice.ptr[0..slice.len]),
                 else => unreachable,
             }
         }
@@ -173,13 +173,13 @@ pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) typ
             if (simd_len > 1) assert(recurrsion_depth == null); // only supported for full SOA
             assert(i + simd_len <= slice.len);
             switch (@typeInfo(Pointer)) {
-                .Struct => {
-                    const s = @typeInfo(Element).Struct;
+                .@"struct" => {
+                    const s = @typeInfo(Element).@"struct";
                     inline for (s.fields) |field| {
                         slice.sub(field).setN(simd_len, i, @field(simd_element, field.name));
                     }
                 },
-                .Pointer => {
+                .pointer => {
                     if (simd_len > 1) {
                         slice.ptr[i..][0..simd_len].* = simd_element;
                     } else {
@@ -198,15 +198,15 @@ pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) typ
             if (simd_len > 1) assert(recurrsion_depth == null); // only supported for full SOA
             assert(i + simd_len <= slice.len);
             return switch (@typeInfo(Pointer)) {
-                .Struct => _: {
-                    const s = @typeInfo(Element).Struct;
+                .@"struct" => _: {
+                    const s = @typeInfo(Element).@"struct";
                     var element: Element = undefined;
                     inline for (s.fields) |field| {
                         @field(element, field.name) = slice.sub(field).at(i);
                     }
                     break :_ element;
                 },
-                .Pointer => _: {
+                .pointer => _: {
                     if (simd_len > 1) {
                         break :_ slice.ptr[i..][0..simd_len].*;
                     } else {
@@ -220,13 +220,13 @@ pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) typ
         pub fn fill(slice: Slice, from: usize, to: usize, element: Element) void {
             assert(simd.length(Element) == 1);
             switch (@typeInfo(Pointer)) {
-                .Struct => {
-                    const s = @typeInfo(Element).Struct;
+                .@"struct" => {
+                    const s = @typeInfo(Element).@"struct";
                     inline for (s.fields) |field| {
                         slice.sub(field).fill(from, to, @field(element, field.name));
                     }
                 },
-                .Pointer => @memset(slice.ptr[from..to], element),
+                .pointer => @memset(slice.ptr[from..to], element),
                 else => unreachable,
             }
         }

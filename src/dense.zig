@@ -12,7 +12,7 @@ const simd = @import("simd.zig");
 /// Returns `true` if `T` is a dense tensor.
 pub inline fn is(T: type) bool {
     comptime {
-        if (@typeInfo(T) != .Struct) return false;
+        if (@typeInfo(T) != .@"struct") return false;
         if (!@hasDecl(T, "Element") or @TypeOf(T.Element) != type) return false;
         if (!@hasDecl(T, "dims") or @TypeOf(T.dims) != Dims) return false;
         return T == Type(T.Element, T.dims);
@@ -168,7 +168,7 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
 
         fn allValidInplace(res: Dense, args: anytype, comptime dims_calc: Dims) bool {
             if (dims_calc.len == 0) return true;
-            inline for (@typeInfo(@TypeOf(args)).Struct.fields) |field_args| {
+            inline for (@typeInfo(@TypeOf(args)).@"struct".fields) |field_args| {
                 if (!res.validInplace(@field(args, field_args.name), dims_calc)) return false;
             }
             return true;

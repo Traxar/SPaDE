@@ -111,7 +111,7 @@ test {
 }
 
 pub fn inv(a: anytype) !@TypeOf(1 / a) {
-    if (@typeInfo(@TypeOf(a)) == .Vector) {
+    if (@typeInfo(@TypeOf(a)) == .vector) {
         if (@reduce(.Or, a == 0)) return error.DivisionByZero;
         return @as(@TypeOf(a), @splat(1)) / a;
     } else {
@@ -121,7 +121,7 @@ pub fn inv(a: anytype) !@TypeOf(1 / a) {
 }
 
 pub fn div(a: anytype, b: anytype) !@TypeOf(a / b) {
-    if (@typeInfo(@TypeOf(b)) == .Vector) {
+    if (@typeInfo(@TypeOf(b)) == .vector) {
         if (@reduce(.Or, b == 0)) return error.DivisionByZero;
     } else {
         if (b == 0) return error.DivisionByZero;

@@ -26,7 +26,7 @@ pub fn Type(dims: Dims) type {
 
         pub fn collectBoundsMany(bounds: *Coords, anyargs: anytype) void {
             const AnyArgs = @TypeOf(anyargs);
-            inline for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
+            inline for (@typeInfo(AnyArgs).@"struct".fields) |field_anyargs| {
                 bounds.collectBounds(@field(anyargs, field_anyargs.name));
             }
         }

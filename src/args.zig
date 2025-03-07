@@ -7,20 +7,20 @@ const tensor = @import("tensor.zig");
 
 /// replace tensor types by their element types
 fn Internal(AnyArgs: type) type {
-    const info = @typeInfo(AnyArgs).Struct;
+    const info = @typeInfo(AnyArgs).@"struct";
     var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
     for (info.fields, &fields) |src, *dest| {
         const is_tensor = tensor.is(src.type);
         const Arg = if (is_tensor) src.type.Element else src.type;
         dest.* = .{
             .alignment = @alignOf(Arg),
-            .default_value = if (is_tensor) null else src.default_value,
+            .default_value_ptr = if (is_tensor) null else src.default_value_ptr,
             .is_comptime = if (is_tensor) false else src.is_comptime,
             .name = src.name,
             .type = Arg,
         };
     }
-    return @Type(std.builtin.Type{ .Struct = .{
+    return @Type(std.builtin.Type{ .@"struct" = .{
         .fields = &fields,
         .decls = &.{},
         .is_tuple = info.is_tuple,
@@ -45,7 +45,7 @@ pub fn Type(AnyArgs: type) type {
         /// set all non tensor values of the result to those of `anyargs`
         pub fn init(anyargs: AnyArgs) Args {
             var res: Args = undefined;
-            inline for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
+            inline for (@typeInfo(AnyArgs).@"struct".fields) |field_anyargs| {
                 if (tensor.is(field_anyargs.type)) continue;
                 @field(res.vals, field_anyargs.name) = @field(anyargs, field_anyargs.name);
             }
@@ -54,7 +54,7 @@ pub fn Type(AnyArgs: type) type {
 
         /// set all tensor values of `args` to those of `anyargs` at coordinates `coord`
         pub fn set(args: *Args, anyargs: AnyArgs, coord: []const usize) void {
-            inline for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
+            inline for (@typeInfo(AnyArgs).@"struct".fields) |field_anyargs| {
                 if (!tensor.is(field_anyargs.type)) continue;
                 @field(args.vals, field_anyargs.name) = @field(anyargs, field_anyargs.name).at(coord);
             }
@@ -62,7 +62,7 @@ pub fn Type(AnyArgs: type) type {
 
         pub const dims = _: {
             var res = Dims.from(&.{});
-            for (@typeInfo(AnyArgs).Struct.fields) |field_anyargs| {
+            for (@typeInfo(AnyArgs).@"struct".fields) |field_anyargs| {
                 if (!tensor.is(field_anyargs.type)) continue;
                 res = res.unite(field_anyargs.type.dims);
             }
