@@ -218,7 +218,7 @@ pub fn MultiSlice(comptime Element: type, comptime recurrsion_depth: ?usize) typ
         }
 
         pub fn fill(slice: Slice, from: usize, to: usize, element: Element) void {
-            assert(simd.length(Element) == 1);
+            if (from >= to) return;
             switch (@typeInfo(Pointer)) {
                 .@"struct" => {
                     const s = @typeInfo(Element).@"struct";

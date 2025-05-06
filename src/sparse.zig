@@ -25,20 +25,20 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
     return packed struct {
         const Sparse = @This();
         pub const Element = Element_;
-        pub const dims_sparse = dims_sparse_;
-        pub const dims_dense = dims_dense_;
+        pub const sparse_dims = dims_sparse_;
+        pub const dense_dims = dims_dense_;
         pub const zero = zero_;
 
         const Entry = struct { ind: usize, val: Element };
-        const DataDense = util.MultiSlice(usize, null);
-        const DataSparse = util.MultiSlice(Entry, 1);
+        const Indices = util.MultiSlice(usize, null);
+        const Entries = util.MultiSlice(Entry, 1);
 
-        start: usize,
-        stop: usize,
-        inds_dense: DataDense,
-        ents_sparse: DataSparse,
-        layout_dense: Layout(dims_dense),
-        layout_sparse: Layout(dims_sparse),
+        min_dense_index: usize, //first dense index with entries
+        max_dense_index: usize, //1 + last dense index with entries
+        inds: Indices,
+        ents: Entries,
+        dense_layout: Layout(dense_dims),
+        sparse_layout: Layout(sparse_dims),
 
         /// Returns a newly allocated tensor with size `size`.
         /// - `size` is a multiindex. All entries at an index not in `dims` will be ignored.
@@ -48,19 +48,19 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
         ///
         /// (ex.: `Tensor(f32).Sparse(&.{0},&.{1},0).init(&.{200, 300})` tries to allocate a 200x300 matrix)
         pub fn init(size_: []const usize, nonzeros: usize, arena: Allocator) !Sparse {
-            const layout_dense = Layout(dims_dense).from(size_);
-            const inds_dense = try DataDense.init(layout_dense.n() + 1, arena);
-            errdefer inds_dense.deinit(arena);
-            const layout_sparse = Layout(dims_sparse).from(size_);
-            const ents_sparse = try DataSparse.init(nonzeros, arena);
-            errdefer ents_sparse.deinit(arena);
+            const dense_layout = Layout(dense_dims).from(size_);
+            const inds = try Indices.init(dense_layout.n() + 1, arena);
+            errdefer inds.deinit(arena);
+            const sparse_layout = Layout(sparse_dims).from(size_);
+            const ents = try Entries.init(nonzeros, arena);
+            errdefer ents.deinit(arena);
             return .{
-                .start = 0,
-                .stop = 0,
-                .layout_dense = layout_dense,
-                .layout_sparse = layout_sparse,
-                .inds_dense = inds_dense,
-                .ents_sparse = ents_sparse,
+                .min_dense_index = 0,
+                .max_dense_index = 0,
+                .dense_layout = dense_layout,
+                .sparse_layout = sparse_layout,
+                .inds = inds,
+                .ents = ents,
             };
         }
 
@@ -68,62 +68,124 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
         /// - `size` is a multiindex. All entries at an index not in `dims` will be ignored.
         /// - invalidates data
         pub fn reinit(tensor: *Sparse, size_: []const usize, nonzeros: usize, arena: Allocator) !void {
-            const layout_dense = Layout(dims_dense).from(size_);
-            try tensor.inds_dense.reinit(layout_dense.n() + 1, arena);
-            tensor.layout_dense = layout_dense;
-            tensor.start = 0;
-            tensor.stop = 0;
-            try tensor.ents_sparse.reinit(nonzeros, arena);
-            tensor.layout_sparse = Layout(dims_sparse).from(size_);
+            const dense_layout = Layout(dense_dims).from(size_);
+            try tensor.inds.reinit(dense_layout.n() + 1, arena);
+            tensor.dense_layout = dense_layout;
+            tensor.min_dense_index = 0;
+            tensor.max_dense_index = 0;
+            try tensor.ents.reinit(nonzeros, arena);
+            tensor.sparse_layout = Layout(sparse_dims).from(size_);
         }
 
         /// Frees memory allocated by tensor `tensor`.
         pub fn deinit(tensor: Sparse, arena: Allocator) void {
-            tensor.inds_dense.deinit(arena);
-            tensor.ents_sparse.deinit(arena);
+            tensor.inds.deinit(arena);
+            tensor.ents.deinit(arena);
         }
 
         /// Returns the size of tensor `tensor` in dimension `d`
         pub fn size(tensor: Sparse, comptime d: usize) usize {
-            return tensor.layout_sparse.size.at(d) + tensor.layout_dense.size.at(d);
+            return tensor.sparse_layout.size.at(d) + tensor.dense_layout.size.at(d);
         }
 
-        // fn search(tensor: Sparse, coords: []const usize) struct { ind: usize, ex: bool } {
-        //     const index_dense = tensor.layout_dense.index(coords);
-        //     if (index_dense < tensor.start) return .{.ind = tensor.inds_dense.at(index_dense), .ex = false};// ???
-        //     if (tensor.stop <= index_dense) return .{.ind = tensor.inds_dense.at(index_dense+1), .ex = false};
+        pub fn setCursor(tensor: Sparse, index: usize) void {
+            assert(tensor.min_dense_index == tensor.max_dense_index); //can only set cursor if tensor does not contain any entries
+            assert(index < tensor.ents.len);
+            tensor.inds.set(tensor.min_dense_index, index);
+        }
 
-        //     var min = tensor.inds_dense.at(index_dense);
-        //     var max = tensor.inds_dense.at(index_dense + 1);
-        //     if (min == return
-        //     //use sparse size to maybe reduce search
+        fn eq(a: Element, b: Element) bool {
+            return std.meta.eql(a, b);
+        }
 
-        //     //binary search
+        fn search(tensor: Sparse, dense_index: usize, sparse_index: usize) ?struct { val: Element, i: usize } {
+            if (dense_index < tensor.min_dense_index) return null;
+            if (dense_index >= tensor.max_dense_index) return null;
+            var min = tensor.inds.at(dense_index);
+            var max = tensor.inds.at(dense_index + 1);
+            max = @min(max, min + sparse_index + 1);
+            // min = @max(min, max - (layout_sparse.incr[n+1] - index_sparse) )
+            if (max == min) return null;
+            while (max - min > 1) {
+                const mid = @divFloor(min + max, 2);
+                if (tensor.ents.at(mid).ind < sparse_index)
+                    max = mid
+                else
+                    min = mid;
+            }
+            const ent = tensor.ents.at(min);
+            if (ent.ind != sparse_index) return null;
+            return .{ .val = ent.val, .i = min };
+        }
 
-        // }
+        pub fn at(tensor: Sparse, coords: []const usize) Element {
+            const dense_index = tensor.dense_layout.index(coords);
+            const sparse_index = tensor.sparse_layout.index(coords);
+            const search_result = tensor.search(dense_index, sparse_index) orelse return zero;
+            return search_result.val;
+        }
 
-        // /// return index of row, col in matrix
-        // /// performs binary search
-        // /// O(log(m)), O(1) if dense
-        // fn indAt(a: Matrix, row: Index, col: Index) I {
-        //     const r = a.val.items(.col)[a.rptr[row]..a.rptr[row + 1]];
-        //     if (r.len == 0) {
-        //         return .{ .ind = a.rptr[row], .ex = false };
-        //     } else {
-        //         var min: Index = @intCast(r.len -| (a.cols - col));
-        //         var max: Index = @intCast(@min(r.len - 1, col));
-        //         while (min < max) {
-        //             const pivot = @divFloor(min + max, 2);
-        //             if (col <= r[pivot]) {
-        //                 max = pivot;
-        //             } else {
-        //                 min = pivot + 1;
-        //             }
-        //         }
-        //         return .{ .ind = a.rptr[row] + min, .ex = col == r[min] };
-        //     }
-        // }
-
+        /// Sets tensor `tensor` at coordinates `coords` to the new value `value`.
+        /// - `coord` is a multiindex. All entries at an index not in `dims` will be ignored.
+        pub fn set(tensor: *Sparse, coords: []const usize, value: Element) !void {
+            const dense_index = tensor.dense_layout.index(coords);
+            const sparse_index = tensor.sparse_layout.index(coords);
+            if (tensor.min_dense_index == tensor.max_dense_index) {
+                const i = tensor.inds.at(tensor.min_dense_index);
+                tensor.inds.set(dense_index, i);
+                tensor.inds.set(dense_index + 1, i + 1);
+                tensor.min_dense_index = dense_index;
+                tensor.max_dense_index = dense_index + 1;
+                tensor.ents.set(i, .{ .val = value, .ind = sparse_index });
+                return;
+            }
+            const search_result = tensor.search(dense_index, sparse_index);
+            const min_index = tensor.inds.at(tensor.min_dense_index);
+            const max_index = tensor.inds.at(tensor.max_dense_index);
+            const first = dense_index < tensor.min_dense_index or (dense_index == tensor.min_dense_index and sparse_index <= tensor.ents.at(min_index).ind);
+            const last = dense_index >= tensor.max_dense_index or (dense_index + 1 == tensor.max_dense_index and sparse_index >= tensor.ents.at(max_index - 1).ind);
+            if (search_result) |res| { //entry already exists
+                if (!(first or last) or !eq(value, zero)) {
+                    tensor.ents.set(res.i, .{ .val = value, .ind = sparse_index });
+                } else if (last) { // value == zero and last
+                    var new_max_index = res.i;
+                    while (new_max_index > min_index and eq(tensor.ents.at(new_max_index - 1).val, zero)) {
+                        new_max_index -= 1;
+                    }
+                    while (tensor.max_dense_index > tensor.min_dense_index and tensor.inds.at(tensor.max_dense_index - 1) >= new_max_index) {
+                        tensor.max_dense_index -= 1;
+                    }
+                    tensor.inds.set(tensor.max_dense_index, new_max_index);
+                } else if (first) { // value == zero and first
+                    var new_min_index = res.i + 1;
+                    while (new_min_index < max_index and eq(tensor.ents.at(new_min_index).val, zero)) {
+                        new_min_index += 1;
+                    }
+                    while (tensor.min_dense_index < tensor.max_dense_index and tensor.inds.at(tensor.min_dense_index + 1) <= new_min_index) {
+                        tensor.min_dense_index += 1;
+                    }
+                    tensor.inds.set(tensor.min_dense_index, new_min_index);
+                }
+            } else if (!eq(value, zero)) { //search == null --> new entry
+                if (last) {
+                    const i = tensor.inds.at(tensor.max_dense_index);
+                    if (i >= tensor.ents.len) return error.OutOfMemory;
+                    tensor.ents.set(i, .{ .val = value, .ind = sparse_index });
+                    tensor.inds.fill(tensor.max_dense_index + 1, dense_index + 1, i);
+                    tensor.inds.set(dense_index + 1, i + 1);
+                    tensor.max_dense_index = dense_index + 1;
+                } else if (first) {
+                    const i = tensor.inds.at(tensor.min_dense_index);
+                    if (i == 0) return error.OutOfMemory;
+                    tensor.ents.set(i - 1, .{ .val = value, .ind = sparse_index });
+                    tensor.inds.fill(dense_index + 1, tensor.min_dense_index, i);
+                    tensor.inds.set(dense_index, i - 1);
+                    tensor.min_dense_index = dense_index;
+                } else {
+                    return error.InsertNotAllowed;
+                }
+            }
+        }
     };
 }
 
@@ -132,6 +194,106 @@ test {
     const S = Type(f32, Dims.from(&.{ 1, 2 }), Dims.from(&.{0}), 0);
     const s = try S.init(&.{ 3, 4, 5, 6 }, 7, ally); //unused dimension 3 is ignored
     defer s.deinit(ally);
-    try expect(s.inds_dense.len == 3 + 1);
-    try expect(s.ents_sparse.len == 7);
+    try expect(s.inds.len == 3 + 1);
+    try expect(s.ents.len == 7);
+}
+
+test {
+    const ally = std.testing.allocator;
+    const S = Type(f32, Dims.from(&.{1}), Dims.from(&.{0}), 0); //sparse rows
+    var s = try S.init(&.{ 10, 10 }, 20, ally); //unused dimension 3 is ignored
+    defer s.deinit(ally);
+    try expect(s.inds.len == 11);
+    try expect(s.ents.len == 20);
+
+    try expect(s.at(&.{ 0, 0 }) == 0);
+    try expect(s.at(&.{ 0, 9 }) == 0);
+    try expect(s.at(&.{ 9, 0 }) == 0);
+    try expect(s.at(&.{ 9, 9 }) == 0);
+
+    s.setCursor(0);
+    try s.set(&.{ 0, 0 }, 1);
+    try s.set(&.{ 0, 9 }, 2);
+    try s.set(&.{ 9, 0 }, 3);
+    try s.set(&.{ 9, 9 }, 4);
+    try expect(s.at(&.{ 0, 0 }) == 1);
+    try expect(s.at(&.{ 0, 9 }) == 2);
+    try expect(s.at(&.{ 9, 0 }) == 3);
+    try expect(s.at(&.{ 9, 9 }) == 4);
+
+    try s.set(&.{ 9, 9 }, 0);
+    try expect(s.at(&.{ 0, 0 }) == 1);
+    try expect(s.at(&.{ 0, 9 }) == 2);
+    try expect(s.at(&.{ 9, 0 }) == 3);
+    try expect(s.at(&.{ 9, 9 }) == 0);
+    try expect(s.min_dense_index == 0);
+    try expect(s.max_dense_index == 10);
+    try expect(s.inds.at(0) == 0);
+    try expect(s.inds.at(1) == 2);
+    try expect(s.inds.at(2) == 2);
+    try expect(s.inds.at(9) == 2);
+    try expect(s.inds.at(10) == 3);
+
+    try s.set(&.{ 0, 9 }, 0);
+    try s.set(&.{ 9, 0 }, 0);
+    try expect(s.at(&.{ 0, 0 }) == 1);
+    try expect(s.at(&.{ 0, 9 }) == 0);
+    try expect(s.at(&.{ 9, 0 }) == 0);
+    try expect(s.at(&.{ 9, 9 }) == 0);
+    try expect(s.min_dense_index == 0);
+    try expect(s.max_dense_index == 1);
+    try expect(s.inds.at(0) == 0);
+    try expect(s.inds.at(1) == 1);
+}
+
+test {
+    const ally = std.testing.allocator;
+    const S = Type(f32, Dims.from(&.{1}), Dims.from(&.{0}), 0); //sparse rows
+    var s = try S.init(&.{ 10, 10 }, 20, ally); //unused dimension 3 is ignored
+    defer s.deinit(ally);
+    try expect(s.inds.len == 11);
+    try expect(s.ents.len == 20);
+
+    try expect(s.at(&.{ 0, 0 }) == 0);
+    try expect(s.at(&.{ 0, 9 }) == 0);
+    try expect(s.at(&.{ 9, 0 }) == 0);
+    try expect(s.at(&.{ 9, 9 }) == 0);
+
+    s.setCursor(s.ents.len - 1);
+    try s.set(&.{ 9, 9 }, 4);
+    try s.set(&.{ 9, 0 }, 3);
+    try s.set(&.{ 0, 9 }, 2);
+    try s.set(&.{ 0, 0 }, 1);
+    try expect(s.at(&.{ 0, 0 }) == 1);
+    try expect(s.at(&.{ 0, 9 }) == 2);
+    try expect(s.at(&.{ 9, 0 }) == 3);
+    try expect(s.at(&.{ 9, 9 }) == 4);
+
+    try s.set(&.{ 0, 0 }, 0);
+    try s.set(&.{ 0, 9 }, 0);
+    try expect(s.at(&.{ 0, 0 }) == 0);
+    try expect(s.at(&.{ 0, 9 }) == 0);
+    try expect(s.at(&.{ 9, 0 }) == 3);
+    try expect(s.at(&.{ 9, 9 }) == 4);
+    try expect(s.min_dense_index == 9);
+    try expect(s.max_dense_index == 10);
+    try expect(s.inds.at(9) == 18);
+    try expect(s.inds.at(10) == 20);
+
+    try s.set(&.{ 9, 0 }, 0);
+    try s.set(&.{ 0, 9 }, 0);
+    try expect(s.at(&.{ 0, 0 }) == 0);
+    try expect(s.at(&.{ 0, 9 }) == 0);
+    try expect(s.at(&.{ 9, 0 }) == 0);
+    try expect(s.at(&.{ 9, 9 }) == 4);
+    try expect(s.min_dense_index == 9);
+    try expect(s.max_dense_index == 10);
+    try expect(s.inds.at(9) == 19);
+    try expect(s.inds.at(10) == 20);
+
+    try s.set(&.{ 9, 9 }, 0);
+    try expect(s.at(&.{ 9, 9 }) == 0);
+    try expect(s.min_dense_index == 9);
+    try expect(s.max_dense_index == 9);
+    try expect(s.inds.at(9) == 19);
 }
