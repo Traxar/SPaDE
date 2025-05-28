@@ -35,7 +35,9 @@ pub const Type = struct {
     }
 
     pub inline fn slice(dims: Dims) []const usize {
-        return dims.ptr[0..dims.len];
+        comptime {
+            return dims.ptr[0..dims.len];
+        }
     }
 
     /// comptime-only difference of 2 sets

@@ -4,10 +4,10 @@ const expect = std.testing.expect;
 const Dims = @import("dims.zig").Type;
 const tensor = @import("tensor.zig");
 
-pub fn Type(dims: Dims) type {
+pub fn Type(Index: type, dims: Dims) type {
     return struct {
         const Coords = @This();
-        arr: [dims.max() + 1]usize,
+        arr: [dims.max() + 1]Index,
 
         pub const zero = Coords{ .arr = .{0} ** (dims.max() + 1) };
 
@@ -53,7 +53,7 @@ pub fn Type(dims: Dims) type {
 
 test "coord reset/next" {
     const dims = Dims.from(&.{ 0, 2 });
-    const Coords = Type(dims);
+    const Coords = Type(u16, dims);
     const size = Coords{
         .arr = .{ 3, 4, 5 },
     };

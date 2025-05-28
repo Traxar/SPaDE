@@ -4,32 +4,33 @@ const assert = std.debug.assert;
 const Dims = @import("dims.zig").Type;
 
 /// n-dimensional Index
-pub fn Type(comptime dims: Dims) type {
+pub fn Type(Index: type, dims: Dims) type {
+    if (@typeInfo(Index).int.signedness != .unsigned) @compileError("Index must be an unsigned integer");
     return packed struct {
         pub const Position = @This();
         pub const zero = Position{ .vec = @splat(0) };
-        vec: @Vector(dims.len, usize),
+        vec: @Vector(dims.len, Index),
 
-        pub fn from(coord: []const usize) Position {
+        pub fn from(coord: []const Index) Position {
             if (dims.len == 0) return undefined;
             assert(coord.len > dims.max()); //not enough coordinates provided
             const mask = comptime _: {
-                var m: @Vector(dims.len, i32) = undefined;
+                var mask: @Vector(dims.len, i32) = undefined;
                 for (dims.slice(), 0..) |d, i| {
-                    m[i] = d;
+                    mask[i] = d;
                 }
-                break :_ m;
+                break :_ mask;
             };
-            return .{ .vec = @shuffle(usize, coord[0 .. dims.max() + 1].*, undefined, mask) };
+            return .{ .vec = @shuffle(Index, coord[0 .. dims.max() + 1].*, undefined, mask) };
         }
 
-        /// value at dimension `d`, 0 if `d` does not exist
-        pub inline fn at(a: Position, comptime d: usize) usize {
-            return if (dims.index(d)) |i| a.vec[i] else 0;
+        /// value at dimension `d`, `null` if `d` does not exist
+        pub inline fn at(a: Position, comptime d: usize) ?Index {
+            return if (dims.index(d)) |i| a.vec[i] else null;
         }
 
         /// set value at dimension
-        pub fn set(a: *Position, comptime d: usize, new: usize) void {
+        pub fn set(a: *Position, comptime d: usize, new: Index) void {
             a.vec[dims.index(d).?] = new;
         }
 
@@ -46,7 +47,7 @@ pub fn Type(comptime dims: Dims) type {
         }
 
         /// index from increment and position
-        pub fn index(incr: Position, pos: Position) usize {
+        pub fn index(incr: Position, pos: Position) Index {
             if (dims.len == 0) return 0;
             return @reduce(.Add, incr.vec * pos.vec);
         }
@@ -63,7 +64,7 @@ pub fn Type(comptime dims: Dims) type {
         }
 
         /// position from increment and index
-        pub fn position(incr: Position, ind: usize) ?Position {
+        pub fn position(incr: Position, ind: Index) ?Position {
             assert(incr.increasing());
             var pos = Position{ .vec = undefined };
             if (dims.len == 0) return pos;
@@ -75,6 +76,7 @@ pub fn Type(comptime dims: Dims) type {
                 i -= pos.vec[j] * incr.vec[j];
             }
             if (i != 0) return null;
+            assert(incr.index(pos) == ind);
             return pos;
         }
 
@@ -90,13 +92,13 @@ pub fn Type(comptime dims: Dims) type {
             return @reduce(.And, a.vec == b.vec);
         }
 
-        /// number of entries
-        pub fn mul(size: Position) usize {
+        /// multiply entries
+        pub fn mul(size: Position) Index {
             return if (dims.len > 0) @reduce(.Mul, size.vec) else 1;
         }
 
         /// remove dimension d
-        pub fn cut(a: Position, comptime d: usize) Type(dims.sub(Dims.from(&.{d}))) {
+        pub fn cut(a: Position, comptime d: usize) Type(Index, dims.sub(Dims.from(&.{d}))) {
             const i = dims.index(d);
             assert(i != null); //d must be in dims
             const mask = comptime _: {
@@ -106,15 +108,15 @@ pub fn Type(comptime dims: Dims) type {
                 }
                 break :_ m;
             };
-            return .{ .vec = @shuffle(usize, a.vec, undefined, mask) };
+            return .{ .vec = @shuffle(Index, a.vec, undefined, mask) };
         }
 
         pub fn next(iter: *Position, size: Position) bool {
             inline for (dims.slice()) |dim| {
-                if (iter.at(dim) == size.at(dim) - 1) {
+                if (iter.at(dim) orelse 0 == size.at(dim).? - 1) {
                     iter.set(dim, 0);
                 } else {
-                    iter.set(dim, iter.at(dim) + 1);
+                    iter.set(dim, (iter.at(dim) orelse 0) + 1);
                     return true;
                 }
             }
@@ -124,7 +126,7 @@ pub fn Type(comptime dims: Dims) type {
 }
 
 test "position from index" {
-    const Pos = Type(Dims.from(&.{ 0, 1, 2 }));
+    const Pos = Type(u16, Dims.from(&.{ 0, 1, 2 }));
     const size = Pos.from(&.{ 2, 3, 4 });
     const incr = size.increment();
     try expect(incr.eq(Pos.from(&.{ 1, 2, 6 })));

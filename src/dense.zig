@@ -15,19 +15,21 @@ pub inline fn is(T: type) bool {
         if (@typeInfo(T) != .@"struct") return false;
         if (!@hasDecl(T, "Element") or @TypeOf(T.Element) != type) return false;
         if (!@hasDecl(T, "dims") or @TypeOf(T.dims) != Dims) return false;
-        return T == Type(T.Element, T.dims);
+        if (!@hasDecl(T, "Index") or @TypeOf(T.Index) != type) return false;
+        return T == Type(T.Index, T.Element, T.dims);
     }
 }
 
-pub fn Type(Element_: type, comptime dims_: Dims) type {
+pub fn Type(_Index: type, _Element: type, comptime dims_: Dims) type {
     return packed struct {
         const Dense = @This();
-        pub const Element = Element_;
+        pub const Index = _Index;
+        pub const Element = _Element;
         pub const dims = dims_;
 
         const Data = util.MultiSlice(Element, null);
 
-        layout: Layout(dims),
+        layout: Layout(Index, dims),
         vals: Data,
 
         /// Returns a newly allocated tensor with size `size` and `undefined` values.
@@ -35,8 +37,8 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
         /// - Free the result by using `deinit`.
         ///
         /// (ex.: `Type(f32).Dense(&.{0, 1}).init(&.{2, 3})` tries to allocate a 2x3 matrix)
-        pub fn init(size_: []const usize, allocator: Allocator) !Dense {
-            const layout = Layout(dims).from(size_);
+        pub fn init(size_: []const Index, allocator: Allocator) !Dense {
+            const layout = Layout(Index, dims).from(size_);
             return .{
                 .layout = layout,
                 .vals = try Data.init(layout.n(), allocator),
@@ -58,30 +60,30 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
         }
 
         /// Returns the size of tensor `tensor` in dimension `d`
-        pub fn size(tensor: Dense, comptime d: usize) usize {
-            return tensor.layout.size.at(d);
+        pub fn size(tensor: Dense, comptime d: usize) Index {
+            return tensor.layout.size.at(d) orelse 0;
         }
 
         /// Returns value of tensor `tensor` at coordinates `coords`.
         /// - `coord` is a multiindex. All entries at an index not in `dims` will be ignored.
-        pub fn at(tensor: Dense, coords: []const usize) Element {
+        pub fn at(tensor: Dense, coords: []const Index) Element {
             return tensor.vals.at(tensor.layout.index(coords));
         }
 
         /// Sets tensor `tensor` at coordinates `coords` to the new value `value`.
         /// - `coord` is a multiindex. All entries at an index not in `dims` will be ignored.
-        pub fn set(tensor: Dense, coords: []const usize, value: Element) void {
+        pub fn set(tensor: Dense, coords: []const Index, value: Element) void {
             tensor.vals.set(tensor.layout.index(coords), value);
         }
 
         /// Lazily swap dimensions `i` and `j`.
         /// - this has no cost
-        pub fn t(tensor: Dense, comptime i: usize, comptime j: usize) Type(Element, dims.swap(i, j)) {
+        pub fn t(tensor: Dense, comptime i: usize, comptime j: usize) Type(Index, Element, dims.swap(i, j)) {
             return @bitCast(tensor);
         }
 
         /// Lazily restrict the coordinate of dimension `d` to size `size` starting at `start`.
-        pub fn clamp(tensor: Dense, comptime d: usize, start: usize, _size: usize) Dense {
+        pub fn clamp(tensor: Dense, comptime d: usize, start: Index, _size: Index) Dense {
             return .{
                 .layout = tensor.layout.clamp(d, start, _size),
                 .vals = tensor.vals,
@@ -90,7 +92,7 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
 
         /// Lazily fix the coordinate in dimension `d` to `coord`.
         /// - This returns a tensor of lower order.
-        pub fn sub(tensor: Dense, comptime d: usize, coord: usize) Type(Element, dims.sub(Dims.from(&.{d}))) {
+        pub fn sub(tensor: Dense, comptime d: usize, coord: Index) Type(Index, Element, dims.sub(Dims.from(&.{d}))) {
             return .{
                 .layout = tensor.layout.sub(d, coord),
                 .vals = tensor.vals,
@@ -99,7 +101,7 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
 
         /// Lazily take the diagonal of dimensions `i` and `j`.
         /// - The result is a tensor without dimension `j`.
-        pub fn diag(tensor: Dense, comptime i: usize, comptime j: usize) Type(Element, dims.sub(Dims.from(&.{j}))) {
+        pub fn diag(tensor: Dense, comptime i: usize, comptime j: usize) Type(Index, Element, dims.sub(Dims.from(&.{j}))) {
             return .{
                 .layout = tensor.layout.diag(i, j),
                 .vals = tensor.vals,
@@ -111,15 +113,15 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
         /// - `ew` is a function which is applied *elementwise*. It takes `args`, with each tensor swapped out for one of its elements,
         ///   as input and returns `Element` or `!Element`.
         /// - `red` is a function used to *reduce* the results of `ew` to fit the `res.dims`. It takes two `Element`s as input and returns one `Element`.
-        pub fn f(res: Dense, comptime red: anytype, comptime ew: anytype, args: anytype) Arg(@TypeOf(args)).ErrorWrap(ew, void) {
-            const A = Arg(@TypeOf(args));
+        pub fn f(res: Dense, comptime red: anytype, comptime ew: anytype, args: anytype) Arg(Index, @TypeOf(args)).ErrorWrap(ew, void) {
+            const A = Arg(Index, @TypeOf(args));
             return res.fInternal(red, ew, args, dims.unite(A.dims));
         }
 
         /// res <- red(ew(args))
         /// with iteration order given by `dims_order`
-        fn fInternal(res: Dense, comptime red: anytype, comptime ew: anytype, args: anytype, comptime dims_order: Dims) Arg(@TypeOf(args)).ErrorWrap(ew, void) {
-            const A = Arg(@TypeOf(args));
+        fn fInternal(res: Dense, comptime red: anytype, comptime ew: anytype, args: anytype, comptime dims_order: Dims) Arg(Index, @TypeOf(args)).ErrorWrap(ew, void) {
+            const A = Arg(Index, @TypeOf(args));
             const dims_total = dims.unite(A.dims);
             assert(dims_total.equal(dims_order)); //dims_order must match dimensions of the tensor operation
             const dims_fill = dims_order.sub(A.dims);
@@ -128,7 +130,7 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
             assert(res.allValidInplace(args, dims_calc)); //inplace operation not valid
             const bounds = res.collectBounds(args);
             var a = A.init(args);
-            var coord_iter: Coords(dims_total) = undefined;
+            var coord_iter: Coords(Index, dims_total) = undefined;
             coord_iter.reset(dims_calc);
             while (true) {
                 coord_iter.reset(dims_red);
@@ -153,7 +155,7 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
         /// union of all dimensions of `@This()` and `Args`
         inline fn CoordsType(Args: type) type {
             comptime {
-                return Coords(dims.unite(Arg(Args).dims));
+                return Coords(Index, dims.unite(Arg(Index, Args).dims));
             }
         }
 
@@ -189,7 +191,7 @@ pub fn Type(Element_: type, comptime dims_: Dims) type {
 
 test "dense type" {
     const ally = std.testing.allocator;
-    const S = Type(f32, Dims.from(&.{ 1, 2 }));
+    const S = Type(u16, f32, Dims.from(&.{ 1, 2 }));
     const s = try S.init(&.{ 3, 4, 5 }, ally); //unused dimension 0 is ignored
     defer s.deinit(ally);
     try expect(s.vals.len == 20);
@@ -197,7 +199,7 @@ test "dense type" {
 
 test "dense type 0D" {
     const ally = std.testing.allocator;
-    const S = Type(f32, Dims.from(&.{}));
+    const S = Type(u16, f32, Dims.from(&.{}));
     const s = try S.init(&.{}, ally);
     defer s.deinit(ally);
     try expect(s.vals.len == 1);
@@ -205,7 +207,7 @@ test "dense type 0D" {
 
 test "dense at/set" {
     const ally = std.testing.allocator;
-    const S = Type(f32, Dims.from(&.{ 0, 1 }));
+    const S = Type(u16, f32, Dims.from(&.{ 0, 1 }));
     const s = try S.init(&.{ 2, 3 }, ally);
     defer s.deinit(ally);
     s.set(&.{ 0, 2, 4 }, 6);
@@ -215,7 +217,7 @@ test "dense at/set" {
 test "dense f" {
     const op = @import("op.zig");
     const ally = std.testing.allocator;
-    const T = @import("tensor.zig").Type(f32);
+    const T = @import("tensor.zig").Type(u16, f32);
     const V = T.Dense(&.{0});
     const M = T.Dense(&.{ 0, 1 });
     const a = try V.init(&.{2}, ally);
@@ -250,7 +252,7 @@ test "dense f" {
 
 test "dense sub/fix" {
     const ally = std.testing.allocator;
-    const M = Type(f32, Dims.from(&.{ 0, 1 }));
+    const M = Type(u16, f32, Dims.from(&.{ 0, 1 }));
     const a = try M.init(&.{ 2, 3 }, ally);
     defer a.deinit(ally);
     a.set(&.{ 0, 0 }, 1);
@@ -280,17 +282,17 @@ test "dense sub/fix" {
 test "dense diag" {
     const op = @import("op.zig");
     const ally = std.testing.allocator;
-    const V = Type(usize, Dims.from(&.{0}));
-    const M = Type(usize, Dims.from(&.{ 0, 1 }));
+    const V = Type(u16, isize, Dims.from(&.{0}));
+    const M = Type(u16, isize, Dims.from(&.{ 0, 1 }));
     const a = try V.init(&.{4}, ally);
     defer a.deinit(ally);
     for (0..a.size(0)) |i| {
-        a.set(&.{i}, i + 1);
+        a.set(&.{@intCast(i)}, @intCast(i + 1));
     }
     const b = try M.init(&.{ a.size(0), a.size(0) }, ally);
     defer b.deinit(ally);
     b.f(undefined, op.add, .{ a, a.t(0, 1) });
     a.f(undefined, op.mul, .{ a, 2 });
     const c: V = b.diag(0, 1);
-    try expect(@import("tensor.zig").Type(bool).f(op.@"and", op.eq, .{ a, c }));
+    try expect(@import("tensor.zig").Type(u16, bool).f(op.@"and", op.eq, .{ a, c }));
 }

@@ -19,7 +19,7 @@ pub inline fn is(T: type) bool {
 /// Returns a base type used for:
 /// - creating tensor types with elements of type `Element`.
 /// - tensor operations with a single scalar output of type `Element`.
-pub fn Type(Element: type) type {
+pub fn Type(Index: type, Element: type) type {
     if (is(Element)) @compileError("Element must not be a tensor");
     return packed struct {
         /// Returns a dense tensor type with dimensions specified by `dims`:
@@ -30,7 +30,7 @@ pub fn Type(Element: type) type {
         /// - the order of `dims` specifies the memory layout.
         ///   (ex.: `&.{0, 1}` when scanning the allocated memory, index-`0` is scanned first before moving to the next value of index-`1`)
         pub fn Dense(comptime dims: []const usize) type {
-            return dense.Type(Element, Dims.from(dims));
+            return dense.Type(Index, Element, Dims.from(dims));
         }
 
         /// Returns a sparse tensor type with dimensions specified by `dims':
@@ -52,7 +52,7 @@ pub fn Type(Element: type) type {
         /// - `ew` is a function which is applied *elementwise*. It takes `args`, with each tensor swapped out for one of its elements,
         ///   as input and returns `Element` or `!Element`.
         /// - `red` is a function used to *reduce* the results of `ew` into a single scalar value. It takes two `Element`s as input and returns one `Element`.
-        pub fn f(comptime red: anytype, comptime ew: anytype, args: anytype) Arg(@TypeOf(args)).ErrorWrap(ew, Element) {
+        pub fn f(comptime red: anytype, comptime ew: anytype, args: anytype) Arg(Index, @TypeOf(args)).ErrorWrap(ew, Element) {
             const res = Dense(&.{}){
                 .layout = .{
                     .size = undefined,

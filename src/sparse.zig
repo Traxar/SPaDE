@@ -21,10 +21,11 @@ pub inline fn is(T: type) bool {
     }
 }
 
-pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: Dims, comptime zero_: Element_) type {
+pub fn Type(_Index: type, _Element: type, comptime dims_sparse_: Dims, comptime dims_dense_: Dims, comptime zero_: _Element) type {
     return packed struct {
         const Sparse = @This();
-        pub const Element = Element_;
+        pub const Index = _Index;
+        pub const Element = _Element;
         pub const sparse_dims = dims_sparse_;
         pub const dense_dims = dims_dense_;
         pub const zero = zero_;
@@ -37,8 +38,8 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
         max_dense_index: usize, //1 + last dense index with entries
         inds: Indices,
         ents: Entries,
-        dense_layout: Layout(dense_dims),
-        sparse_layout: Layout(sparse_dims),
+        dense_layout: Layout(Index, dense_dims),
+        sparse_layout: Layout(Index, sparse_dims),
 
         /// Returns a newly allocated tensor with size `size`.
         /// - `size` is a multiindex. All entries at an index not in `dims` will be ignored.
@@ -47,11 +48,11 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
         /// - Free the result by using `deinit`.
         ///
         /// (ex.: `Tensor(f32).Sparse(&.{0},&.{1},0).init(&.{200, 300})` tries to allocate a 200x300 matrix)
-        pub fn init(size_: []const usize, nonzeros: usize, arena: Allocator) !Sparse {
-            const dense_layout = Layout(dense_dims).from(size_);
+        pub fn init(size_: []const Index, nonzeros: usize, arena: Allocator) !Sparse {
+            const dense_layout = Layout(Index, dense_dims).from(size_);
             const inds = try Indices.init(dense_layout.n() + 1, arena);
             errdefer inds.deinit(arena);
-            const sparse_layout = Layout(sparse_dims).from(size_);
+            const sparse_layout = Layout(Index, sparse_dims).from(size_);
             const ents = try Entries.init(nonzeros, arena);
             errdefer ents.deinit(arena);
             return .{
@@ -118,7 +119,7 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
             return .{ .val = ent.val, .i = min };
         }
 
-        pub fn at(tensor: Sparse, coords: []const usize) Element {
+        pub fn at(tensor: Sparse, coords: []const Index) Element {
             const dense_index = tensor.dense_layout.index(coords);
             const sparse_index = tensor.sparse_layout.index(coords);
             const search_result = tensor.search(dense_index, sparse_index) orelse return zero;
@@ -127,7 +128,7 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
 
         /// Sets tensor `tensor` at coordinates `coords` to the new value `value`.
         /// - `coord` is a multiindex. All entries at an index not in `dims` will be ignored.
-        pub fn set(tensor: *Sparse, coords: []const usize, value: Element) !void {
+        pub fn set(tensor: *Sparse, coords: []const Index, value: Element) !void {
             const dense_index = tensor.dense_layout.index(coords);
             const sparse_index = tensor.sparse_layout.index(coords);
             if (tensor.min_dense_index == tensor.max_dense_index) {
@@ -191,7 +192,7 @@ pub fn Type(Element_: type, comptime dims_sparse_: Dims, comptime dims_dense_: D
 
 test {
     const ally = std.testing.allocator;
-    const S = Type(f32, Dims.from(&.{ 1, 2 }), Dims.from(&.{0}), 0);
+    const S = Type(u16, f32, Dims.from(&.{ 1, 2 }), Dims.from(&.{0}), 0);
     const s = try S.init(&.{ 3, 4, 5, 6 }, 7, ally); //unused dimension 3 is ignored
     defer s.deinit(ally);
     try expect(s.inds.len == 3 + 1);
@@ -200,7 +201,7 @@ test {
 
 test {
     const ally = std.testing.allocator;
-    const S = Type(f32, Dims.from(&.{1}), Dims.from(&.{0}), 0); //sparse rows
+    const S = Type(u16, f32, Dims.from(&.{1}), Dims.from(&.{0}), 0); //sparse rows
     var s = try S.init(&.{ 10, 10 }, 20, ally); //unused dimension 3 is ignored
     defer s.deinit(ally);
     try expect(s.inds.len == 11);
@@ -248,7 +249,7 @@ test {
 
 test {
     const ally = std.testing.allocator;
-    const S = Type(f32, Dims.from(&.{1}), Dims.from(&.{0}), 0); //sparse rows
+    const S = Type(u16, f32, Dims.from(&.{1}), Dims.from(&.{0}), 0); //sparse rows
     var s = try S.init(&.{ 10, 10 }, 20, ally); //unused dimension 3 is ignored
     defer s.deinit(ally);
     try expect(s.inds.len == 11);

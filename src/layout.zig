@@ -10,20 +10,23 @@ pub inline fn is(L: type) bool {
         if (@typeInfo(L) != .@"struct") return false;
         if (!@hasDecl(L, "dims")) return false;
         if (@TypeOf(L.dims) != Dims) return false;
-        return L == Type(L.dims);
+        if (!@hasDecl(L, "Index")) return false;
+        if (@TypeOf(L.Index) != type) return false;
+        return L == Type(L.Index, L.dims);
     }
 }
 
-pub fn Type(comptime _dims: Dims) type {
+pub fn Type(_Index: type, _dims: Dims) type {
     return packed struct {
+        pub const Index = _Index;
         pub const dims = _dims;
         const Layout = @This();
-        const Position = PositionFrom(dims);
+        const Position = PositionFrom(Index, dims);
         size: Position,
         incr: Position,
-        offset: usize,
+        offset: Index,
 
-        pub fn from(size: []const usize) Layout {
+        pub fn from(size: []const Index) Layout {
             const sz = Position.from(size);
             return .{
                 .size = sz,
@@ -33,18 +36,18 @@ pub fn Type(comptime _dims: Dims) type {
         }
 
         /// get index of position `coords`
-        pub fn index(layout: Layout, coords: []const usize) usize {
+        pub fn index(layout: Layout, coords: []const Index) Index {
             return layout.indexFromPosition(Position.from(coords));
         }
 
         /// get index of position `pos`
-        pub fn indexFromPosition(layout: Layout, pos: Position) usize {
+        pub fn indexFromPosition(layout: Layout, pos: Position) Index {
             assert(pos.lt(layout.size)); //out of bounds
             return layout.offset + layout.incr.index(pos);
         }
 
         /// get position of index `ind` if existent else null
-        fn position(layout: Layout, ind: usize) ?Position {
+        fn position(layout: Layout, ind: Index) ?Position {
             if (layout.offset > ind) return null;
             const pos_ = layout.incr.position(ind - layout.offset) orelse return null;
             if (!pos_.lt(layout.size)) return null;
@@ -52,32 +55,32 @@ pub fn Type(comptime _dims: Dims) type {
         }
 
         /// number of entries
-        pub fn n(layout: Layout) usize {
+        pub fn n(layout: Layout) Index {
             return layout.size.mul();
         }
 
         /// Lazily swap dimensions `i` and `j`.
         /// - this has no cost
-        pub fn t(layout: Layout, comptime i: usize, comptime j: usize) Type(dims.swap(i, j)) {
+        pub fn t(layout: Layout, comptime i: usize, comptime j: usize) Type(Index, dims.swap(i, j)) {
             return @bitCast(layout);
         }
 
         /// Restrict the coordinate of dimension `d` to size `size` starting at `start`.
-        pub fn clamp(layout: Layout, comptime d: usize, start: usize, size: usize) Layout {
+        pub fn clamp(layout: Layout, comptime d: usize, start: Index, size: Index) Layout {
             assert(size > 0);
-            assert(start + size <= layout.size.at(d)); //out of bounds
+            assert(start + size <= layout.size.at(d).?); //out of bounds
             var res = layout;
             res.size.set(d, size);
-            res.offset += start * layout.incr.at(d);
+            res.offset += start * layout.incr.at(d).?;
             return res;
         }
 
         /// Fix the coordinate in dimension `d` to `coord`.
         /// - This returns a tensor of lower order.
-        pub fn sub(layout: Layout, comptime d: usize, coord: usize) Type(dims.sub(Dims.from(&.{d}))) {
-            assert(coord <= layout.size.at(d)); //out of bounds
+        pub fn sub(layout: Layout, comptime d: usize, coord: Index) Type(Index, dims.sub(Dims.from(&.{d}))) {
+            assert(coord <= layout.size.at(d).?); //out of bounds
             return .{
-                .offset = layout.offset + coord * layout.incr.at(d),
+                .offset = layout.offset + coord * layout.incr.at(d).?,
                 .size = layout.size.cut(d),
                 .incr = layout.incr.cut(d),
             };
@@ -85,14 +88,14 @@ pub fn Type(comptime _dims: Dims) type {
 
         /// Take the diagonal of dimensions `i` and `j`.
         /// - The result is a tensor without dimension `j`.
-        pub fn diag(layout: Layout, comptime i: usize, comptime j: usize) Type(dims.sub(Dims.from(&.{j}))) {
+        pub fn diag(layout: Layout, comptime i: usize, comptime j: usize) Type(Index, dims.sub(Dims.from(&.{j}))) {
             assert(i != j);
             assert(dims.contains(Dims.from(&.{ i, j })));
             if (dims.index(i).? < dims.index(j).?) return layout.diag(j, i).t(i, j);
             var size = layout.size.cut(j);
-            size.set(i, @min(layout.size.at(i), layout.size.at(j)));
+            size.set(i, @min(layout.size.at(i).?, layout.size.at(j).?));
             var incr = layout.incr.cut(j);
-            incr.set(i, layout.incr.at(i) + layout.incr.at(j));
+            incr.set(i, layout.incr.at(i).? + layout.incr.at(j).?);
             return .{
                 .offset = layout.offset,
                 .size = size,
@@ -131,21 +134,21 @@ pub fn Type(comptime _dims: Dims) type {
 }
 
 test "layout type" {
-    const S = Type(Dims.from(&.{ 1, 2 }));
+    const S = Type(u32, Dims.from(&.{ 1, 2 }));
     const s = S.from(&.{ 3, 4, 5 }); //unused dimension 0 is ignored
     try expect(s.size.vec[0] == 4);
     try expect(s.size.vec[1] == 5);
 }
 
 test "layout 0D" {
-    const S = Type(Dims.from(&.{}));
+    const S = Type(u16, Dims.from(&.{}));
     const s = S.from(&.{});
-    try expect(@TypeOf(s.size.vec) == @Vector(0, usize));
+    try expect(@TypeOf(s.size.vec) == @Vector(0, u16));
 }
 
 test "layout inplace" {
-    const V = Type(Dims.from(&.{0}));
-    const M = Type(Dims.from(&.{ 0, 1 }));
+    const V = Type(usize, Dims.from(&.{0}));
+    const M = Type(usize, Dims.from(&.{ 0, 1 }));
     const a = M.from(&.{ 4, 4 });
 
     try expect(a.validInplace(a, M.dims));
@@ -173,7 +176,7 @@ test "layout inplace" {
 }
 
 test "layout sub/fix" {
-    const M = Type(Dims.from(&.{ 0, 1 }));
+    const M = Type(usize, Dims.from(&.{ 0, 1 }));
     const a = M.from(&.{ 2, 3 });
 
     const b = a.clamp(1, 1, 2);

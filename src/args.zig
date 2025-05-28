@@ -29,7 +29,7 @@ fn Internal(AnyArgs: type) type {
 }
 
 test "Internal" {
-    const A = struct { tensor.Type(f32).Dense(&.{ 0, 1 }), tensor.Type(bool).Dense(&.{2}), isize };
+    const A = struct { tensor.Type(u16, f32).Dense(&.{ 0, 1 }), tensor.Type(u16, bool).Dense(&.{2}), isize };
     const Arg = Internal(A);
     const arg: Arg = undefined;
     try expect(@TypeOf(arg[0]) == f32);
@@ -37,7 +37,7 @@ test "Internal" {
     try expect(@TypeOf(arg[2]) == isize);
 }
 
-pub fn Type(AnyArgs: type) type {
+pub fn Type(Index: type, AnyArgs: type) type {
     return struct {
         const Args = @This();
         vals: Internal(AnyArgs),
@@ -53,7 +53,7 @@ pub fn Type(AnyArgs: type) type {
         }
 
         /// set all tensor values of `args` to those of `anyargs` at coordinates `coord`
-        pub fn set(args: *Args, anyargs: AnyArgs, coord: []const usize) void {
+        pub fn set(args: *Args, anyargs: AnyArgs, coord: []const Index) void {
             inline for (@typeInfo(AnyArgs).@"struct".fields) |field_anyargs| {
                 if (!tensor.is(field_anyargs.type)) continue;
                 @field(args.vals, field_anyargs.name) = @field(anyargs, field_anyargs.name).at(coord);
@@ -83,8 +83,8 @@ pub fn Type(AnyArgs: type) type {
 
 test "Args init/set" {
     const ally = std.testing.allocator;
-    const M = tensor.Type(f32).Dense(&.{ 0, 1 });
-    const V = tensor.Type(bool).Dense(&.{2});
+    const M = tensor.Type(u16, f32).Dense(&.{ 0, 1 });
+    const V = tensor.Type(u16, bool).Dense(&.{2});
     const A = struct { M, V, isize };
     const a = A{ try M.init(&.{ 2, 2 }, ally), try V.init(&.{ 0, 0, 3 }, ally), 123 };
     defer {
@@ -96,7 +96,7 @@ test "Args init/set" {
     a[0].set(&.{ 1, 1, 1 }, 3.5);
     a[1].set(&.{ 1, 1, 1 }, true);
 
-    var arg = Type(A).init(a);
+    var arg = Type(u16, A).init(a);
     try expect(arg.vals[2] == 123);
 
     arg.set(a, &.{ 0, 0, 0 });
@@ -111,8 +111,8 @@ test "Args init/set" {
 }
 
 test "Args dims" {
-    const A = struct { tensor.Type(f32).Dense(&.{ 0, 1 }), tensor.Type(bool).Dense(&.{2}), isize };
-    const d = Type(A).dims;
+    const A = struct { tensor.Type(u16, f32).Dense(&.{ 0, 1 }), tensor.Type(u16, bool).Dense(&.{2}), isize };
+    const d = Type(u16, A).dims;
     try expect(d.len == 3);
     try expect(d.ptr[0] == 0);
     try expect(d.ptr[1] == 1);
@@ -122,7 +122,7 @@ test "Args dims" {
 test "Args ErrorWrap" {
     const op = @import("op.zig");
     const A = struct { f32, f32 };
-    const Args = Type(A);
+    const Args = Type(u16, A);
     try expect(Args.ErrorWrap(op.add, bool) == bool);
     try expect(Args.ErrorWrap(op.div, bool) != bool);
 }
@@ -131,6 +131,6 @@ test "Args call" {
     const op = @import("op.zig");
     const A = struct { f32, f32 };
     const a = A{ 1, 2 };
-    const args = Type(A).init(a);
+    const args = Type(u16, A).init(a);
     try expect(args.call(op.add) == 3);
 }
