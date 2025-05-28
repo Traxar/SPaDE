@@ -67,3 +67,9 @@ pub fn Type(Index: type, Element: type) type {
         }
     };
 }
+
+test {
+    _ = dense;
+    _ = sparse;
+    _ = simd;
+}
