@@ -12,7 +12,7 @@ a library for **SP**arse **a**nd **DE**nse tensor operations.
 
 in your zig-project run:
 
-    zig fetch --save https://github.com/Traxar/SPaDE/archive/refs/tags/v0.0.2.tar.gz
+    zig fetch --save https://github.com/Traxar/SPaDE/archive/refs/tags/v0.0.3.tar.gz
 
 Then add `spade` as an import to your root modules in `build.zig`:
 
@@ -35,7 +35,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const spade = @import("spade");
 
-const T = spade.tensor.Type(f32); //tensor base type, supports arbitrary element types
+const T = spade.Tensor(usize,f32); //tensor base type, supports arbitrary element types
 const V = T.Dense(&.{0}); //vector
 const Mcol = T.Dense(&.{ 0, 1 }); //column major matrix
 const Mrow = T.Dense(&.{ 1, 0 }); //row major matrix
