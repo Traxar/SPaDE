@@ -131,15 +131,6 @@ pub fn Type(_Index: type, _Element: type, comptime dims_sparse_: Dims, comptime 
         pub fn set(tensor: *Sparse, coords: []const Index, value: Element) !void {
             const dense_index = tensor.dense_layout.index(coords);
             const sparse_index = tensor.sparse_layout.index(coords);
-            if (tensor.min_dense_index == tensor.max_dense_index) {
-                const i = tensor.inds.at(tensor.min_dense_index);
-                tensor.inds.set(dense_index, i);
-                tensor.inds.set(dense_index + 1, i + 1);
-                tensor.min_dense_index = dense_index;
-                tensor.max_dense_index = dense_index + 1;
-                tensor.ents.set(i, .{ .val = value, .ind = sparse_index });
-                return;
-            }
             const search_result = tensor.search(dense_index, sparse_index);
             const min_index = tensor.inds.at(tensor.min_dense_index);
             const max_index = tensor.inds.at(tensor.max_dense_index);
@@ -168,7 +159,17 @@ pub fn Type(_Index: type, _Element: type, comptime dims_sparse_: Dims, comptime 
                     tensor.inds.set(tensor.min_dense_index, new_min_index);
                 }
             } else if (!eq(value, zero)) { //search == null --> new entry
-                if (last) {
+                const empty = tensor.min_dense_index == tensor.max_dense_index;
+                if (empty) {
+                    @branchHint(.cold);
+                    const i = tensor.inds.at(tensor.min_dense_index);
+                    tensor.ents.set(i, .{ .val = value, .ind = sparse_index });
+                    tensor.inds.set(dense_index, i);
+                    tensor.inds.set(dense_index + 1, i + 1);
+                    tensor.max_dense_index = dense_index + 1;
+                    tensor.min_dense_index = dense_index;
+                    return;
+                } else if (last) {
                     const i = tensor.inds.at(tensor.max_dense_index);
                     if (i >= tensor.ents.len) return error.OutOfMemory;
                     tensor.ents.set(i, .{ .val = value, .ind = sparse_index });
