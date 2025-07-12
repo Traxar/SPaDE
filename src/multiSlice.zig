@@ -54,12 +54,9 @@ pub fn MultiSlice(comptime Element: type) type {
             else => unreachable,
         } {
             return switch (@typeInfo(Element)) {
-                .@"struct" => _: {
-                    assert(@TypeOf(field) == std.builtin.Type.StructField);
-                    break :_ .{
-                        .ptr = @field(slice.ptr, field.name),
-                        .len = slice.len,
-                    };
+                .@"struct" => .{
+                    .ptr = @field(slice.ptr, field.name),
+                    .len = slice.len,
                 },
                 .array, .vector => .{
                     .ptr = slice.ptr[field],
