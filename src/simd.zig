@@ -2,10 +2,9 @@ const std = @import("std");
 const expect = std.testing.expect;
 const assert = std.debug.assert;
 
-/// recurrsive vector struct
+/// recurrsivly replace every integer/float/bool field with a corresponing vector of given length
 pub fn Vector(len: comptime_int, Element: type) type {
     assert(len > 0);
-    if (len == 1) return Element; //? does this still make sense?
     return switch (@typeInfo(Element)) {
         .@"struct" => |s| _: {
             var res_fields: [s.fields.len]std.builtin.Type.StructField = undefined;
@@ -45,16 +44,13 @@ pub fn Vector(len: comptime_int, Element: type) type {
     };
 }
 
-test "Vector" {
+test Vector {
     const A = struct { a: bool, b: u13, c: [4]f32 };
     const B = Vector(3, A);
     const b: B = undefined;
     try expect(@TypeOf(b.a) == @Vector(3, bool));
     try expect(@TypeOf(b.b) == @Vector(3, u13));
     try expect(@TypeOf(b.c) == [4]@Vector(3, f32));
-
-    try expect(Vector(1, A) == A);
-    try expect(Vector(1, B) == B);
 
     const C = Vector(2, B);
     const c: C = undefined;
@@ -80,7 +76,7 @@ fn minVectorLength(Element: type) ?comptime_int {
     };
 }
 
-test "minVectorLength" {
+test minVectorLength {
     const A = struct { a: bool, b: u13, c: f32 };
     try expect(minVectorLength(A) == 1);
     const B = struct { a: bool, b: @Vector(3, u13), c: f32 };
@@ -97,7 +93,7 @@ pub fn length(Element: type, MaybeVector: type) ?comptime_int {
     return null;
 }
 
-test "length" {
+test length {
     const A = struct { a: bool, b: u13, c: f32 };
     const B = struct { a: bool, b: @Vector(3, u13), c: f32 };
     const C = Vector(3, A);
@@ -110,7 +106,6 @@ test "length" {
 
 /// splat element into a recurrsive vector struct
 pub fn splat(len: comptime_int, element: anytype) Vector(len, @TypeOf(element)) {
-    if (len == 1) return element;
     return switch (@typeInfo(@TypeOf(element))) {
         .@"struct" => |s| _: {
             var res: Vector(len, @TypeOf(element)) = undefined;
@@ -121,8 +116,8 @@ pub fn splat(len: comptime_int, element: anytype) Vector(len, @TypeOf(element)) 
         },
         .array, .vector => _: {
             var res: Vector(len, @TypeOf(element)) = undefined;
-            inline for (element, 0..) |entry, i| {
-                res[i] = splat(len, entry);
+            inline for (&res, element) |*dest, entry| {
+                dest.* = splat(len, entry);
             }
             break :_ res;
         },
@@ -130,30 +125,29 @@ pub fn splat(len: comptime_int, element: anytype) Vector(len, @TypeOf(element)) 
     };
 }
 
-test "splat" {
+test splat {
     const A = struct { a: bool, b: u13, c: [2]f32 };
     const a = A{ .a = true, .b = 123, .c = .{ -0.5, 0.3 } };
-    const c = splat(3, a);
-    try expect(@TypeOf(c) == Vector(3, A));
+    const b = splat(3, a);
+    try expect(@TypeOf(b) == Vector(3, A));
 
-    try expect(c.a[0] == true);
-    try expect(c.a[1] == true);
-    try expect(c.a[2] == true);
+    try expect(b.a[0] == true);
+    try expect(b.a[1] == true);
+    try expect(b.a[2] == true);
 
-    try expect(c.b[0] == 123);
-    try expect(c.b[1] == 123);
-    try expect(c.b[2] == 123);
+    try expect(b.b[0] == 123);
+    try expect(b.b[1] == 123);
+    try expect(b.b[2] == 123);
 
-    try expect(c.c[0][0] == -0.5);
-    try expect(c.c[0][1] == -0.5);
-    try expect(c.c[0][2] == -0.5);
-    try expect(c.c[1][0] == 0.3);
-    try expect(c.c[1][1] == 0.3);
-    try expect(c.c[1][2] == 0.3);
+    try expect(b.c[0][0] == -0.5);
+    try expect(b.c[0][1] == -0.5);
+    try expect(b.c[0][2] == -0.5);
+    try expect(b.c[1][0] == 0.3);
+    try expect(b.c[1][1] == 0.3);
+    try expect(b.c[1][2] == 0.3);
 }
 
-/// suggest simd length of a recurrsive vector struct
-/// based on std heuristics
+/// suggest simd length based on std heuristics
 pub fn suggestLength(Element: type) ?comptime_int {
     return switch (@typeInfo(Element)) {
         .@"struct" => |s| _: {
@@ -170,7 +164,7 @@ pub fn suggestLength(Element: type) ?comptime_int {
     };
 }
 
-test "suggestLength" {
-    const A = struct { a: bool, b: u13, c: @Vector(2, f32) };
+test suggestLength {
+    const A = struct { a: bool, b: [10]u13, c: @Vector(2, f32) };
     try expect(suggestLength(A) == suggestLength(f32));
 }
