@@ -85,7 +85,7 @@ pub fn MultiSlice(comptime Element: type) type {
                     }
                 },
                 else => { //end case
-                    assert(@typeInfo(Pointer).pointer.size == .many);
+                    assert(Pointer == [*]Element);
                 },
             }
         }
