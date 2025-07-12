@@ -93,5 +93,7 @@ pub fn MultiSlice(comptime Element: type) type {
 }
 
 test MultiSlice {
-    _ = MultiSlice(struct { a: bool, b: @Vector(3, u16), c: [4]f32 });
+    const A = struct { a: bool, b: @Vector(3, u16), c: [4]f32 };
+    _ = MultiSlice(A);
+    _ = MultiSlice([5]A);
 }
