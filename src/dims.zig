@@ -1,7 +1,6 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const assert = std.debug.assert;
-const util = @import("util.zig");
 
 pub const Type = struct {
     const Dims = @This();

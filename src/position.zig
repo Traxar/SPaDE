@@ -3,7 +3,7 @@ const expect = std.testing.expect;
 const assert = std.debug.assert;
 const Dims = @import("dims.zig").Type;
 
-/// n-dimensional Index
+/// `dims.len`-dimensional Index
 pub fn Type(Index: type, dims: Dims) type {
     if (@typeInfo(Index).int.signedness != .unsigned) @compileError("Index must be an unsigned integer");
     return struct {

@@ -31,7 +31,7 @@ pub fn Vector(len: comptime_int, Element: type) type {
             .array = .{
                 .child = Vector(len, a.child),
                 .len = a.len,
-                .sentinel_ptr = if (a.sentinel_ptr == null) null else &splat(len, a.sentinel_ptr.*),
+                .sentinel_ptr = if (a.sentinel_ptr == null) null else &splat(len, a.sentinel_ptr.?.*),
             },
         }),
         .vector => |v| @Type(std.builtin.Type{

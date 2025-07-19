@@ -1,10 +1,7 @@
-//! Note: these functions have to work for @Vector inputs as well as scalar inputs
+//! Note: these functions have to work for simd.Vector inputs as well as scalar inputs
 //! Note: dereferencing not needed as these functions are not field decls
 const std = @import("std");
 const expect = std.testing.expect;
-const assert = std.debug.assert;
-
-const simd = @import("simd.zig");
 
 pub fn @"and"(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
     if (@TypeOf(a) == bool) {

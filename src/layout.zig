@@ -2,7 +2,7 @@ const std = @import("std");
 const expect = std.testing.expect;
 const assert = std.debug.assert;
 const Dims = @import("dims.zig").Type;
-const PositionFrom = @import("position.zig").Type;
+const PositionType = @import("position.zig").Type;
 
 /// Returns `true` if `L` is a layout.
 pub inline fn is(L: type) bool {
@@ -21,7 +21,7 @@ pub fn Type(_Index: type, _dims: Dims) type {
         pub const Index = _Index;
         pub const dims = _dims;
         const Layout = @This();
-        const Position = PositionFrom(Index, dims);
+        const Position = PositionType(Index, dims);
         size: Position,
         incr: Position,
         offset: Index,

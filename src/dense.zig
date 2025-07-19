@@ -8,7 +8,7 @@ const Dims = @import("dims.zig").Type;
 const Layout = @import("layout.zig").Type;
 const Coords = @import("coords.zig").Type;
 const Arg = @import("args.zig").Type;
-const simd = @import("simd.zig");
+//? const simd = @import("simd.zig");
 
 /// Returns `true` if `T` is a dense tensor.
 pub inline fn is(T: type) bool {

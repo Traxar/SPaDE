@@ -40,8 +40,8 @@ pub fn Type(Index: type, Element: type) type {
         ///   (ex.: `&.{0, 1}` maps index-`0` and index-`1` onto the matrix, all other/further indices will be ingnored)
         /// - the order of `dims` specifies the memory layout.
         ///   (ex.: `&.{0, 1}` when scanning the allocated memory, index-`0` is scanned first before moving to the next value of index-`1`)
-        /// - the first 'sparsity' dimensions will be sparse.
-        /// - only entries not equal to 'zero' will take up memory in sparse dimensions.
+        /// - the first `sparsity` dimensions will be sparse.
+        /// - only entries not equal to `zero` will take up memory in sparse dimensions.
         pub fn Sparse(comptime dims: []const usize, comptime sparsity: usize, comptime zero: Element) type {
             _ = Dims.from(dims);
             return sparse.Type(Element, Dims.from(dims[0..sparsity]), Dims.from(dims[sparsity..dims.len]), zero);
