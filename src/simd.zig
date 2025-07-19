@@ -1,6 +1,7 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const assert = std.debug.assert;
+const util = @import("util.zig");
 
 /// recurrsivly replace every integer/float/bool field with a corresponing vector of given length
 pub fn Vector(len: comptime_int, Element: type) type {
@@ -106,23 +107,24 @@ test length {
 
 /// splat element into a recurrsive vector struct
 pub fn splat(len: comptime_int, element: anytype) Vector(len, @TypeOf(element)) {
-    return switch (@typeInfo(@TypeOf(element))) {
-        .@"struct" => |s| _: {
-            var res: Vector(len, @TypeOf(element)) = undefined;
+    const Element = @TypeOf(element);
+    var res: Vector(len, Element) = undefined;
+    switch (@typeInfo(Element)) {
+        .@"struct" => |s| {
             inline for (s.fields) |field| {
                 @field(res, field.name) = splat(len, @field(element, field.name));
             }
-            break :_ res;
         },
-        .array, .vector => _: {
-            var res: Vector(len, @TypeOf(element)) = undefined;
-            inline for (&res, element) |*dest, entry| {
-                dest.* = splat(len, entry);
+        .array, .vector => {
+            inline for (0..util.len(Element)) |i| {
+                res[i] = splat(len, element[i]);
             }
-            break :_ res;
         },
-        else => @splat(element),
-    };
+        else => {
+            res = @splat(element);
+        },
+    }
+    return res;
 }
 
 test splat {

@@ -2,7 +2,7 @@ const std = @import("std");
 const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const util = @import("util.zig");
+const MultiSlice = @import("multiSlice.zig").Type;
 const Dims = @import("dims.zig").Type;
 const Layout = @import("layout.zig").Type;
 const Coords = @import("coords.zig").Type;
@@ -22,7 +22,7 @@ pub inline fn is(T: type) bool {
 }
 
 pub fn Type(_Index: type, _Element: type, comptime dims_sparse_: Dims, comptime dims_dense_: Dims, comptime zero_: _Element) type {
-    return packed struct {
+    return struct {
         const Sparse = @This();
         pub const Index = _Index;
         pub const Element = _Element;
@@ -31,8 +31,8 @@ pub fn Type(_Index: type, _Element: type, comptime dims_sparse_: Dims, comptime 
         pub const zero = zero_;
 
         const Entry = struct { ind: usize, val: Element };
-        const Indices = util.MultiSlice(usize, null);
-        const Entries = util.MultiSlice(Entry, 1);
+        const Indices = MultiSlice(usize);
+        const Entries = MultiSlice(Entry);
 
         min_dense_index: usize, //first dense index with entries
         max_dense_index: usize, //1 + last dense index with entries
@@ -173,14 +173,16 @@ pub fn Type(_Index: type, _Element: type, comptime dims_sparse_: Dims, comptime 
                     const i = tensor.inds.at(tensor.max_dense_index);
                     if (i >= tensor.ents.len) return error.OutOfMemory;
                     tensor.ents.set(i, .{ .val = value, .ind = sparse_index });
-                    tensor.inds.fill(tensor.max_dense_index + 1, dense_index + 1, i);
+                    if (tensor.max_dense_index < dense_index)
+                        tensor.inds.fill(tensor.max_dense_index + 1, dense_index + 1, i);
                     tensor.inds.set(dense_index + 1, i + 1);
                     tensor.max_dense_index = dense_index + 1;
                 } else if (first) {
                     const i = tensor.inds.at(tensor.min_dense_index);
                     if (i == 0) return error.OutOfMemory;
                     tensor.ents.set(i - 1, .{ .val = value, .ind = sparse_index });
-                    tensor.inds.fill(dense_index + 1, tensor.min_dense_index, i);
+                    if (dense_index + 1 < tensor.min_dense_index)
+                        tensor.inds.fill(dense_index + 1, tensor.min_dense_index, i);
                     tensor.inds.set(dense_index, i - 1);
                     tensor.min_dense_index = dense_index;
                 } else {

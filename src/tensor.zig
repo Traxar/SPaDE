@@ -2,7 +2,7 @@ const std = @import("std");
 const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const util = @import("util.zig");
+const MultiSlice = @import("multiSlice.zig").Type;
 const Dims = @import("dims.zig").Type;
 const Arg = @import("args.zig").Type;
 const dense = @import("dense.zig");
@@ -59,7 +59,7 @@ pub fn Type(Index: type, Element: type) type {
                     .incr = undefined,
                     .offset = 0,
                 },
-                .vals = util.MultiSlice(Element, null).stackInit(1),
+                .vals = MultiSlice(Element).stackInit(1),
             };
             const err = res.f(red, ew, args);
             assert(@TypeOf(if (@TypeOf(err) != void) try err else err) == void);

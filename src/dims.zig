@@ -1,13 +1,14 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const assert = std.debug.assert;
+const util = @import("util.zig");
 
 pub const Type = struct {
     const Dims = @This();
     ptr: [*]const usize,
-    len: usize,
+    len: comptime_int,
 
-    pub inline fn from(dims: []const usize) Dims {
+    pub inline fn from(comptime dims: []const usize) Dims {
         comptime {
             const res = Dims{ .ptr = dims.ptr, .len = dims.len };
             if (!res.isSet()) @compileError("dimensions must be unique");

@@ -3,6 +3,7 @@ const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const util = @import("util.zig");
+const MultiSlice = @import("multiSlice.zig").Type;
 const Dims = @import("dims.zig").Type;
 const Layout = @import("layout.zig").Type;
 const Coords = @import("coords.zig").Type;
@@ -21,13 +22,13 @@ pub inline fn is(T: type) bool {
 }
 
 pub fn Type(_Index: type, _Element: type, comptime dims_: Dims) type {
-    return packed struct {
+    return struct {
         const Dense = @This();
         pub const Index = _Index;
         pub const Element = _Element;
         pub const dims = dims_;
 
-        const Data = util.MultiSlice(Element, null);
+        const Data = MultiSlice(Element);
 
         layout: Layout(Index, dims),
         vals: Data,
@@ -79,13 +80,16 @@ pub fn Type(_Index: type, _Element: type, comptime dims_: Dims) type {
         /// Lazily swap dimensions `i` and `j`.
         /// - this has no cost
         pub fn t(tensor: Dense, comptime i: usize, comptime j: usize) Type(Index, Element, dims.swap(i, j)) {
-            return @bitCast(tensor);
+            return .{
+                .layout = tensor.layout.t(i, j),
+                .vals = tensor.vals,
+            };
         }
 
         /// Lazily restrict the coordinate of dimension `d` to size `size` starting at `start`.
-        pub fn clamp(tensor: Dense, comptime d: usize, start: Index, _size: Index) Dense {
+        pub fn clamp(tensor: Dense, comptime d: usize, start: Index, size_: Index) Dense {
             return .{
-                .layout = tensor.layout.clamp(d, start, _size),
+                .layout = tensor.layout.clamp(d, start, size_),
                 .vals = tensor.vals,
             };
         }
@@ -252,8 +256,8 @@ test "dense f" {
 
 test "dense sub/fix" {
     const ally = std.testing.allocator;
-    const M = Type(u16, f32, Dims.from(&.{ 0, 1 }));
-    const a = try M.init(&.{ 2, 3 }, ally);
+    const A = Type(u16, f32, Dims.from(&.{ 0, 1 }));
+    const a = try A.init(&.{ 2, 3 }, ally);
     defer a.deinit(ally);
     a.set(&.{ 0, 0 }, 1);
     a.set(&.{ 0, 1 }, 2);

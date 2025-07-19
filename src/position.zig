@@ -6,10 +6,14 @@ const Dims = @import("dims.zig").Type;
 /// n-dimensional Index
 pub fn Type(Index: type, dims: Dims) type {
     if (@typeInfo(Index).int.signedness != .unsigned) @compileError("Index must be an unsigned integer");
-    return packed struct {
+    return struct {
         pub const Position = @This();
-        pub const zero = Position{ .vec = @splat(0) };
-        vec: @Vector(dims.len, Index),
+        pub const zero = Position{ .arr = @splat(0) };
+        arr: [dims.len]Index,
+
+        fn vec(pos: Position) @Vector(dims.len, Index) {
+            return pos.arr;
+        }
 
         pub fn from(coord: []const Index) Position {
             if (dims.len == 0) return undefined;
@@ -21,17 +25,17 @@ pub fn Type(Index: type, dims: Dims) type {
                 }
                 break :_ mask;
             };
-            return .{ .vec = @shuffle(Index, coord[0 .. dims.max() + 1].*, undefined, mask) };
+            return .{ .arr = @shuffle(Index, coord[0 .. dims.max() + 1].*, undefined, mask) };
         }
 
         /// value at dimension `d`, `null` if `d` does not exist
         pub inline fn at(a: Position, comptime d: usize) ?Index {
-            return if (dims.index(d)) |i| a.vec[i] else null;
+            return if (dims.index(d)) |i| a.arr[i] else null;
         }
 
         /// set value at dimension
         pub fn set(a: *Position, comptime d: usize, new: Index) void {
-            a.vec[dims.index(d).?] = new;
+            a.arr[dims.index(d).?] = new;
         }
 
         /// increment from size
@@ -39,9 +43,9 @@ pub fn Type(Index: type, dims: Dims) type {
             assert(zero.lt(size));
             var res: Position = undefined;
             if (dims.len == 0) return res;
-            res.vec[0] = 1;
+            res.arr[0] = 1;
             inline for (0..dims.len - 1) |i| {
-                res.vec[i + 1] = res.vec[i] * size.vec[i];
+                res.arr[i + 1] = res.arr[i] * size.arr[i];
             }
             return res;
         }
@@ -49,16 +53,16 @@ pub fn Type(Index: type, dims: Dims) type {
         /// index from increment and position
         pub fn index(incr: Position, pos: Position) Index {
             if (dims.len == 0) return 0;
-            return @reduce(.Add, incr.vec * pos.vec);
+            return @reduce(.Add, incr.vec() * pos.vec());
         }
 
         fn increasing(incr: Position) bool {
             switch (dims.len) {
                 0, 1 => return true,
                 else => {
-                    const lower = incr.cut(dims.ptr[dims.len - 1]).vec;
-                    const upper = incr.cut(dims.ptr[0]).vec;
-                    return @reduce(.And, lower <= upper);
+                    const lower = incr.cut(dims.ptr[dims.len - 1]);
+                    const upper = incr.cut(dims.ptr[0]);
+                    return @reduce(.And, lower.vec() <= upper.vec());
                 },
             }
         }
@@ -66,14 +70,14 @@ pub fn Type(Index: type, dims: Dims) type {
         /// position from increment and index
         pub fn position(incr: Position, ind: Index) ?Position {
             assert(incr.increasing());
-            var pos = Position{ .vec = undefined };
+            var pos = Position{ .arr = undefined };
             if (dims.len == 0) return pos;
             var i = ind;
             var j: usize = dims.len;
             while (j > 0) {
                 j -= 1;
-                pos.vec[j] = @divFloor(i, incr.vec[j]);
-                i -= pos.vec[j] * incr.vec[j];
+                pos.arr[j] = @divFloor(i, incr.arr[j]);
+                i -= pos.arr[j] * incr.arr[j];
             }
             if (i != 0) return null;
             assert(incr.index(pos) == ind);
@@ -83,32 +87,31 @@ pub fn Type(Index: type, dims: Dims) type {
         /// all less than
         pub fn lt(a: Position, b: Position) bool {
             if (dims.len == 0) return true;
-            return @reduce(.And, a.vec < b.vec);
+            return @reduce(.And, a.vec() < b.vec());
         }
 
         /// all equal
         fn eq(a: Position, b: Position) bool {
             if (dims.len == 0) return true;
-            return @reduce(.And, a.vec == b.vec);
+            return @reduce(.And, a.vec() == b.vec());
         }
 
         /// multiply entries
         pub fn mul(size: Position) Index {
-            return if (dims.len > 0) @reduce(.Mul, size.vec) else 1;
+            return if (dims.len > 0) @reduce(.Mul, size.vec()) else 1;
         }
 
         /// remove dimension d
         pub fn cut(a: Position, comptime d: usize) Type(Index, dims.sub(Dims.from(&.{d}))) {
-            const i = dims.index(d);
-            assert(i != null); //d must be in dims
+            const i = dims.index(d).?; //d must be in dims
             const mask = comptime _: {
                 var m: @Vector(dims.len - 1, i32) = undefined;
                 for (0..dims.len - 1) |j| {
-                    m[j] = if (j < i.?) j else j + 1;
+                    m[j] = if (j < i) j else j + 1;
                 }
                 break :_ m;
             };
-            return .{ .vec = @shuffle(Index, a.vec, undefined, mask) };
+            return .{ .arr = @shuffle(Index, a.arr, undefined, mask) };
         }
 
         pub fn next(iter: *Position, size: Position) bool {

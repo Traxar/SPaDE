@@ -17,7 +17,7 @@ pub inline fn is(L: type) bool {
 }
 
 pub fn Type(_Index: type, _dims: Dims) type {
-    return packed struct {
+    return struct {
         pub const Index = _Index;
         pub const dims = _dims;
         const Layout = @This();
@@ -62,7 +62,11 @@ pub fn Type(_Index: type, _dims: Dims) type {
         /// Lazily swap dimensions `i` and `j`.
         /// - this has no cost
         pub fn t(layout: Layout, comptime i: usize, comptime j: usize) Type(Index, dims.swap(i, j)) {
-            return @bitCast(layout);
+            return .{
+                .incr = .{ .arr = layout.incr.arr },
+                .offset = layout.offset,
+                .size = .{ .arr = layout.size.arr },
+            };
         }
 
         /// Restrict the coordinate of dimension `d` to size `size` starting at `start`.
@@ -79,10 +83,15 @@ pub fn Type(_Index: type, _dims: Dims) type {
         /// - This returns a tensor of lower order.
         pub fn sub(layout: Layout, comptime d: usize, coord: Index) Type(Index, dims.sub(Dims.from(&.{d}))) {
             assert(coord <= layout.size.at(d).?); //out of bounds
+
+            const offset = layout.offset + coord * layout.incr.at(d).?;
+            const size = layout.size.cut(d);
+            const incr = layout.incr.cut(d);
+
             return .{
-                .offset = layout.offset + coord * layout.incr.at(d).?,
-                .size = layout.size.cut(d),
-                .incr = layout.incr.cut(d),
+                .offset = offset,
+                .size = size,
+                .incr = incr,
             };
         }
 
@@ -136,14 +145,14 @@ pub fn Type(_Index: type, _dims: Dims) type {
 test "layout type" {
     const S = Type(u32, Dims.from(&.{ 1, 2 }));
     const s = S.from(&.{ 3, 4, 5 }); //unused dimension 0 is ignored
-    try expect(s.size.vec[0] == 4);
-    try expect(s.size.vec[1] == 5);
+    try expect(s.size.arr[0] == 4);
+    try expect(s.size.arr[1] == 5);
 }
 
 test "layout 0D" {
     const S = Type(u16, Dims.from(&.{}));
     const s = S.from(&.{});
-    try expect(@TypeOf(s.size.vec) == @Vector(0, u16));
+    try expect(@TypeOf(s.size.arr) == [0]u16);
 }
 
 test "layout inplace" {
@@ -181,13 +190,13 @@ test "layout sub/fix" {
 
     const b = a.clamp(1, 1, 2);
     try expect(b.offset == 2);
-    try expect(b.size.vec[0] == 2);
-    try expect(b.size.vec[1] == 2);
+    try expect(b.size.arr[0] == 2);
+    try expect(b.size.arr[1] == 2);
 
     const c = a.sub(0, 1);
     const V = @TypeOf(c);
     try expect(V.dims.len == 1);
     try expect(V.dims.ptr[0] == 1);
     try expect(c.offset == 1);
-    try expect(c.size.vec[0] == 3);
+    try expect(c.size.arr[0] == 3);
 }
