@@ -13,7 +13,7 @@ fn MultiPointerType(Element: type) type {
             var fields_MP: [s.fields.len]std.builtin.Type.StructField = undefined;
             for (&fields_MP, s.fields) |*field_MP, field_E| {
                 field_MP.* = .{
-                    .alignment = 0,
+                    .alignment = @alignOf(field_E.type),
                     .default_value_ptr = null,
                     .is_comptime = field_E.is_comptime,
                     .name = field_E.name,

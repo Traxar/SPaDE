@@ -11,7 +11,7 @@ pub fn Vector(len: comptime_int, Element: type) type {
             var res_fields: [s.fields.len]std.builtin.Type.StructField = undefined;
             for (s.fields, &res_fields) |field, *res_field| {
                 res_field.* = .{
-                    .alignment = 0,
+                    .alignment = @alignOf(field.type),
                     .default_value_ptr = null,
                     .is_comptime = field.is_comptime,
                     .name = field.name,
