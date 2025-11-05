@@ -99,13 +99,16 @@ pub fn Type(_Index: type, _Element: type, comptime dims_sparse_: Dims, comptime 
             return std.meta.eql(a, b);
         }
 
+        /// Returns
+        /// - {value, index} if entry exists
+        /// - null if no entry at `dense_index` + `sparse_index`
         fn search(tensor: Sparse, dense_index: usize, sparse_index: usize) ?struct { val: Element, i: usize } {
             if (dense_index < tensor.min_dense_index) return null;
             if (dense_index >= tensor.max_dense_index) return null;
             var min = tensor.inds.at(dense_index);
             var max = tensor.inds.at(dense_index + 1);
             max = @min(max, min + sparse_index + 1);
-            // min = @max(min, max - (layout_sparse.incr[n+1] - index_sparse) )
+            // min = @max(min, max - ...) //TODO
             if (max == min) return null;
             while (max - min > 1) {
                 const mid = @divFloor(min + max, 2);
